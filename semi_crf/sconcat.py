@@ -9,12 +9,10 @@ class SegmentalConcatenate(SegmentEncoderBase):
         self.dim = dim
         self.dropout = dropout
         output_dim = dim
-        encoders = [torch.nn.Sequential(torch.nn.Linear(dim, output_dim),
-                                        torch.nn.ReLU(),
-                                        torch.nn.Dropout(p=dropout),
-                                        torch.nn.Linear(output_dim, output_dim))
-                    for _ in range(max_seg_len)]
-        self.encoders = torch.nn.ModuleList(encoders)
+        self.encoder = torch.nn.Sequential(torch.nn.Linear(dim * max_seg_len, output_dim),
+                                           torch.nn.ReLU(),
+                                           torch.nn.Dropout(p=dropout),
+                                           torch.nn.Linear(output_dim, output_dim))
 
     def forward(self, input_: torch.Tensor) -> torch.Tensor:
         # input_: (batch_size, seq_len, dim)
@@ -24,13 +22,17 @@ class SegmentalConcatenate(SegmentEncoderBase):
         if self.use_cuda:
             encoding_ = encoding_.cuda()
 
-        encoding_[:, 0, 0, :] = self.encoders[0](input_[:, 0, :])
         for ending_pos in range(seq_len):
             for starting_pos in range(max(ending_pos - self.max_seg_len, -1) + 1, ending_pos + 1):
                 # the starting_pos and ending_pos are inclusive
                 length = ending_pos - starting_pos
-                for i, pos in enumerate(range(starting_pos, ending_pos + 1)):
-                    encoding_[:, ending_pos, length, :] += self.encoders[i](input_[:, pos, :])
+                block_input_ = input_.narrow(1, starting_pos, length + 1)
+                # we need dynamic padding, so we use functional.pad
+                padded_block_input_ = torch.nn.functional.pad(block_input_,
+                                                              (0, 0, 0, self.max_seg_len - length - 1),
+                                                              'constant', 0.)
+
+                encoding_[:, ending_pos, length, :] = self.encoder(padded_block_input_.view(batch_size, -1))
 
         # output_: (batch_size, seq_len, max_seg_len, dim)
         return encoding_

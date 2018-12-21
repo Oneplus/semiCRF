@@ -21,6 +21,7 @@ from semi_crf.embedding_layer import load_embedding_txt
 from semi_crf.sdiff import SegmentalDifference
 from semi_crf.sconcat import SegmentalConcatenate
 from semi_crf.scnn import SegmentalConvolution
+from semi_crf.srnn import SegmentalRNN
 from semi_crf.dummy_inp import DummyInputEncoder
 from semi_crf.lstm_inp import LSTMInputEncoder
 from semi_crf.lstm_inp import GalLSTMInputEncoder
@@ -175,19 +176,19 @@ class Model(torch.nn.Module):
         super(Model, self).__init__()
         self.use_cuda = use_cuda
         self.word_emb_layer = word_emb_layer
+        self.dropout = torch.nn.Dropout(p=conf["dropout"])
 
-        inp_dim = 0
         input_encoder_name = conf['input_encoder']['name'].lower()
         if input_encoder_name == 'gal_lstm':
             self.input_encoder = GalLSTMInputEncoder(conf['embeddings']['dim'],
                                                      conf['input_encoder']['hidden_dim'],
                                                      conf['input_encoder']['n_layers'])
-            inp_dim = conf['input_encoder']['hidden_dim'] * 2
+            inp_dim = self.input_encoder.encoding_dim()
         elif input_encoder_name == 'lstm':
             self.input_encoder = LSTMInputEncoder(conf['embeddings']['dim'],
                                                   conf['input_encoder']['hidden_dim'],
                                                   conf['input_encoder']['n_layers'])
-            inp_dim = conf['input_encoder']['hidden_dim'] * 2
+            inp_dim = self.input_encoder.encoding_dim()
         elif input_encoder_name == 'dummy':
             self.input_encoder = DummyInputEncoder()
             inp_dim = conf['embeddings']['dim']
@@ -203,7 +204,9 @@ class Model(torch.nn.Module):
             elif name == 'sconcat':
                 encoder = SegmentalConcatenate(max_seg_len, inp_dim, conf["dropout"], use_cuda)
             elif name == 'scnn':
-                encoder = SegmentalConvolution(max_seg_len, inp_dim, conf["filters"], conf["n_highway"], use_cuda)
+                encoder = SegmentalConvolution(max_seg_len, inp_dim, c["filters"], c["n_highway"], use_cuda)
+            elif name == 'srnn':
+                encoder = SegmentalRNN(max_seg_len, inp_dim, c["hidden_dim"], conf["dropout"], use_cuda)
             else:
                 raise ValueError('unsupported segment encoders: {}'.format(name))
             segment_encoders.append(encoder)
@@ -239,11 +242,16 @@ class Model(torch.nn.Module):
         encoded_input_ = self.input_encoder(input_)
         # encoded_input_: (batch_size, seq_len, dim)
 
+        encoded_input_ = self.dropout(encoded_input_)
+
         segment_reprs_ = []
         for segment_encoder in self.segment_encoders:
             segment_reprs_.append(segment_encoder(encoded_input_))
 
         segment_repr_ = torch.cat(segment_reprs_, dim=-1)
+
+        segment_repr_ = self.dropout(segment_repr_)
+
         transitions = self.segment_scorer(segment_repr_)
         start_time = time.time()
 
@@ -374,7 +382,6 @@ def train():
     cmd.add_argument("--batch_size", "--batch", type=int, default=32, help='the batch size.')
     cmd.add_argument("--max_seg_len", default=10, help="the max length of segment.")
     cmd.add_argument("--max_epoch", type=int, default=100, help='the maximum number of iteration.')
-    cmd.add_argument("--dropout", type=float, default=0.0, help='the dropout rate')
     cmd.add_argument("--word_cut", type=int, default=5, help='remove the words that is less frequent than')
     cmd.add_argument("--report_steps", type=int, default=1024, help='eval every x batches')
     cmd.add_argument("--eval_steps", type=int, help='eval every x batches')
@@ -422,7 +429,6 @@ def train():
     label_to_index(raw_training_segment_data_, label2id)
     label_to_index(raw_valid_segment_data_, label2id, incremental=False)
     label_to_index(raw_test_segment_data_, label2id, incremental=False)
-
     logging.info('number of tags: {0}'.format(len(label2id)))
 
     word_count = collections.Counter()

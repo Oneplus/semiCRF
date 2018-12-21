@@ -1,0 +1,19 @@
+{
+    "embeddings": {
+        "dim": 100,
+        "pretrained": "/Users/yijialiu/work/corpus/embeddings/sskip.100.vectors",
+        "has_header": true
+    },
+    "input_encoder": {
+        "name": "dummy"
+    },
+    "segment_encoders": [
+        {
+            "name": "sconcat"
+        }
+    ],
+    "semicrf": {
+        "order": 0
+    },
+    "dropout": 0.1
+}

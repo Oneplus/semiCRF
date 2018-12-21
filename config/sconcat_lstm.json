@@ -1,0 +1,21 @@
+{
+    "embeddings": {
+        "dim": 100,
+        "pretrained": "/Users/yijialiu/work/corpus/embeddings/sskip.100.vectors",
+        "has_header": true
+    },
+    "input_encoder": {
+        "name": "lstm",
+        "hidden_dim": 128,
+        "n_layers": 1
+    },
+    "segment_encoders": [
+        {
+            "name": "sconcat"
+        }
+    ],
+    "semicrf": {
+        "order": 0
+    },
+    "dropout": 0.1
+}
