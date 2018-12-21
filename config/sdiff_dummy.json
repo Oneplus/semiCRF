@@ -1,0 +1,17 @@
+{
+    "embeddings": {
+        "dim": 100 
+    },
+    "input_encoder": {
+        "name": "dummy"
+    },
+    "segment_encoders": [
+        {
+            "name": "sdiff"
+        }
+    ],
+    "semicrf": {
+        "order": 0
+    },
+    "dropout": 0.1
+}
