@@ -524,10 +524,6 @@ def train():
         logging.info('Total embedding time: {:.2f}s'.format(model.emb_time / (epoch + 1)))
         logging.info('Total classify time: {:.2f}s'.format(model.classify_time / (epoch + 1)))
 
-    weights = model.weights
-    if use_cuda:
-        weights = weights.cpu()
-    logging.info("weights: {}".format(weights.data.numpy()))
     logging.info("best_valid_acc: {:.6f}".format(best_valid))
     logging.info("test_acc: {:.6f}".format(test_result))
 
