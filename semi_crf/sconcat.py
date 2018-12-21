@@ -35,6 +35,9 @@ class SegmentalConcatenate(SegmentEncoderBase):
         # output_: (batch_size, seq_len, max_seg_len, dim)
         return encoding_
 
+    def encoding_dim(self):
+        return self.dim
+
 
 if __name__ == "__main__":
     seq_len = 5
@@ -43,6 +46,9 @@ if __name__ == "__main__":
     max_seg_len = 3
 
     encoder = SegmentalConcatenate(max_seg_len, dim, dropout=0.1, use_cuda=False)
+    print(encoder)
+    print(encoder.encoding_dim())
+
     input_ = torch.arange(0, batch_size * seq_len * dim).view(batch_size, seq_len, dim).float()
     print(input_)
     print(encoder.forward(input_))

@@ -13,6 +13,7 @@ class GalLSTMInputEncoder(InputEncoderBase):
         self.encoder_ = GalLSTM(inp_dim, hidden_dim,
                                 bidirectional=True, num_layers=n_layer,
                                 wdrop=dropout, idrop=dropout, batch_first=True)
+        self.hidden_dim = hidden_dim
 
     def forward(self, x):
         # x: (batch_size, seq_len, dim)
@@ -20,6 +21,9 @@ class GalLSTMInputEncoder(InputEncoderBase):
         raw_output, _ = self.encoder_(x)
         # raw_output: (batch_size, seq_len, hidden_dim)
         return raw_output
+
+    def encoding_dim(self):
+        return self.hidden_dim * 2
 
 
 class LSTMInputEncoder(InputEncoderBase):
@@ -31,6 +35,7 @@ class LSTMInputEncoder(InputEncoderBase):
         self.encoder_ = torch.nn.LSTM(inp_dim, hidden_dim,
                                       num_layers=n_layer, dropout=dropout,
                                       bidirectional=True, batch_first=True)
+        self.hidden_dim = hidden_dim
 
     def forward(self, x):
         # x: (batch_size, seq_len, dim)
@@ -38,3 +43,6 @@ class LSTMInputEncoder(InputEncoderBase):
         raw_output, _ = self.encoder_(x)
         # raw_output: (batch_size, seq_len, hidden_dim)
         return raw_output
+
+    def encoding_dim(self):
+        return self.hidden_dim * 2

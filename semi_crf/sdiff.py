@@ -4,8 +4,9 @@ from semi_crf.segment_encoder_base import SegmentEncoderBase
 
 
 class SegmentalDifference(SegmentEncoderBase):
-    def __init__(self, max_seg_len, use_cuda):
+    def __init__(self, max_seg_len, inp_dim, use_cuda):
         super(SegmentalDifference, self).__init__(max_seg_len, use_cuda)
+        self.inp_dim = inp_dim
 
     def forward(self, input_: torch.Tensor) -> torch.Tensor:
         # input_: (batch_size, seq_len, dim)
@@ -27,6 +28,9 @@ class SegmentalDifference(SegmentEncoderBase):
         # output_: (batch_size, seq_len, max_seg_len, dim)
         return encoding_
 
+    def encoding_dim(self):
+        return self.inp_dim
+
 
 if __name__ == "__main__":
     seq_len = 5
@@ -34,7 +38,10 @@ if __name__ == "__main__":
     batch_size = 2
     max_seg_len = 3
 
-    encoder = SegmentalDifference(max_seg_len)
+    encoder = SegmentalDifference(max_seg_len, False)
+    print(encoder)
+    print(encoder.encoding_dim())
+
     input_ = torch.arange(0, batch_size * seq_len * dim).view(batch_size, seq_len, dim)
     print(input_)
     print(encoder.forward(input_))

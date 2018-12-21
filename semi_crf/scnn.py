@@ -36,7 +36,6 @@ class SegmentalConvolution(SegmentEncoderBase):
             for starting_pos in range(max(ending_pos - self.max_seg_len, -1) + 1, ending_pos + 1):
                 length = ending_pos - starting_pos
                 block_input_ = input_.narrow(1, starting_pos, length + 1).transpose(1, 2)
-                print(block_input_.size())
                 convs = []
                 for i in range(len(self.convolutions)):
                     padded_block_input_ = self.padding(block_input_)
@@ -48,9 +47,8 @@ class SegmentalConvolution(SegmentEncoderBase):
                 encoding_[:, ending_pos, length, :] = self.highways(torch.cat(convs, dim=-1))
         return encoding_
 
-    @staticmethod
-    def get_num_filters(filters):
-        return sum(f[1] for f in filters)
+    def encoding_dim(self):
+        return self.n_filters
 
 
 if __name__ == "__main__":
@@ -61,6 +59,8 @@ if __name__ == "__main__":
 
     encoder = SegmentalConvolution(max_seg_len, dim, [[1, 32], [2, 32], [3, 64]], 1, False)
     print(encoder)
+    print(encoder.encoding_dim())
+
     input_ = torch.arange(0, batch_size * seq_len * dim).view(batch_size, seq_len, dim).float()
     print(input_)
     print(encoder.forward(input_))

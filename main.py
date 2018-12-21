@@ -199,17 +199,15 @@ class Model(torch.nn.Module):
         for c in conf['segment_encoders']:
             name = c['name'].lower()
             if name == 'sdiff':
-                encoder = SegmentalDifference(max_seg_len, use_cuda)
-                segment_encoders.append(encoder)
-                enc_dim += inp_dim
+                encoder = SegmentalDifference(max_seg_len, inp_dim, use_cuda)
             elif name == 'sconcat':
                 encoder = SegmentalConcatenate(max_seg_len, inp_dim, conf["dropout"], use_cuda)
-                segment_encoders.append(encoder)
-                enc_dim += inp_dim
             elif name == 'scnn':
                 encoder = SegmentalConvolution(max_seg_len, inp_dim, conf["filters"], conf["n_highway"], use_cuda)
-                segment_encoders.append(encoder)
-                enc_dim += SegmentalConvolution.get_num_filters(conf["filters"])
+            else:
+                raise ValueError('unsupported segment encoders: {}'.format(name))
+            segment_encoders.append(encoder)
+            enc_dim += encoder.encoding_dim()
 
         assert len(segment_encoders) > 0
 
@@ -435,11 +433,12 @@ def train():
     if "pretrained" in conf["embeddings"]:
         embs_payload = load_embedding_txt(conf["embeddings"]["pretrained"], conf["embeddings"]["has_header"])
         word_lexicon = {word: i for i, word in enumerate(embs_payload[0])}
+        logging.info('loaded {} entries from {}'.format(len(embs_payload[0]), conf["embeddings"]["pretrained"]))
     else:
         embs_payload = None
         word_lexicon = {}
     for w in word_count:
-        if word_count[w] >= opt.word_cut:
+        if word_count[w] >= opt.word_cut and w not in word_lexicon:
             word_lexicon[w] = len(word_lexicon)
 
     for special_word in ['<oov>', '<pad>']:
@@ -447,8 +446,7 @@ def train():
             word_lexicon[special_word] = len(word_lexicon)
     logging.info('training vocab size: {}'.format(len(word_lexicon)))
 
-    word_emb_layer = EmbeddingLayer(conf["embeddings"]["dim"], word_lexicon, fix_emb=False,
-                                    embs=embs_payload)
+    word_emb_layer = EmbeddingLayer(conf["embeddings"]["dim"], word_lexicon, fix_emb=False, embs=embs_payload)
     logging.info('Word embedding size: {0}'.format(len(word_emb_layer.word2id)))
 
     n_tags = len(label2id)
