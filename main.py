@@ -182,12 +182,14 @@ class Model(torch.nn.Module):
         if input_encoder_name == 'gal_lstm':
             self.input_encoder = GalLSTMInputEncoder(conf['embeddings']['dim'],
                                                      conf['input_encoder']['hidden_dim'],
-                                                     conf['input_encoder']['n_layers'])
+                                                     conf['input_encoder']['n_layers'],
+                                                     conf["dropout"])
             inp_dim = self.input_encoder.encoding_dim()
         elif input_encoder_name == 'lstm':
             self.input_encoder = LSTMInputEncoder(conf['embeddings']['dim'],
                                                   conf['input_encoder']['hidden_dim'],
-                                                  conf['input_encoder']['n_layers'])
+                                                  conf['input_encoder']['n_layers'],
+                                                  conf["dropout"])
             inp_dim = self.input_encoder.encoding_dim()
         elif input_encoder_name == 'dummy':
             self.input_encoder = DummyInputEncoder()

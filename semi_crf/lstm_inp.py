@@ -8,7 +8,7 @@ class GalLSTMInputEncoder(InputEncoderBase):
     def __init__(self, inp_dim: int,
                  hidden_dim: int,
                  n_layer: int,
-                 dropout: float = 0.):
+                 dropout: float):
         super(GalLSTMInputEncoder, self).__init__()
         self.encoder_ = GalLSTM(inp_dim, hidden_dim,
                                 bidirectional=True, num_layers=n_layer,
@@ -30,7 +30,7 @@ class LSTMInputEncoder(InputEncoderBase):
     def __init__(self, inp_dim: int,
                  hidden_dim: int,
                  n_layer: int,
-                 dropout: float = 0.):
+                 dropout: float):
         super(LSTMInputEncoder, self).__init__()
         self.encoder_ = torch.nn.LSTM(inp_dim, hidden_dim,
                                       num_layers=n_layer, dropout=dropout,
