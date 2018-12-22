@@ -393,7 +393,7 @@ def train():
             else:
                 embs = None
             layer = EmbeddingLayer(c['dim'], input_batchers[i].mapping, fix_emb=c['fixed'],
-                                   embs=embs, normalize=c.get('normalize', True))
+                                   embs=embs, normalize=c.get('normalize', False))
             logger.info('embedding layer for field {0} '
                         'created with {1} x {2}.'.format(c['field'], layer.n_V, layer.n_d))
             input_layers.append(layer)
