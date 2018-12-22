@@ -10,3 +10,6 @@ class SegmentEncoderBase(torch.nn.Module):
 
     def encoding_dim(self) -> int:
         raise NotImplementedError()
+
+    def numeric_input(self) -> bool:
+        raise NotImplementedError()

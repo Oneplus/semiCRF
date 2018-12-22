@@ -46,7 +46,7 @@ class InputBatchBase(object):
 
 
 class InputBatch(InputBatchBase):
-    def __init__(self, name: str, field: int, min_cut: int, oov: str, pad: str, use_cuda: bool):
+    def __init__(self, name: str, field: int, min_cut: int, oov: str, pad: str, lower: bool, use_cuda: bool):
         super(InputBatch, self).__init__(use_cuda)
         self.name = name
         self.field = field
@@ -54,6 +54,7 @@ class InputBatch(InputBatchBase):
         self.oov = oov
         self.pad = pad
         self.mapping = {oov: 0, pad: 1}
+        self.lower = lower
         self.n_tokens = 2
         logger.info('{0}'.format(self))
         logger.info('+ min_cut: {0}'.format(self.min_cut))
@@ -64,6 +65,8 @@ class InputBatch(InputBatchBase):
         batch = torch.LongTensor(batch_size, seq_len).fill_(1)
         for i, input_ in enumerate(input_dataset_):
             for j, x_ij in enumerate(input_):
+                if self.lower:
+                    x_ij = x_ij.lower()
                 batch[i, j] = self.mapping.get(x_ij, 0)
         if self.use_cuda:
             batch = batch.cuda()
@@ -76,6 +79,8 @@ class InputBatch(InputBatchBase):
         counter = collections.Counter()
         for input_ in input_dataset_:
             for word_ in input_:
+                if self.lower:
+                    word_ = word_.lower()
                 counter[word_] += 1
 
         n_entries = 0
@@ -113,6 +118,17 @@ class LengthBatch(InputBatchBase):
         if self.use_cuda:
             batch = batch.cuda()
         return batch
+
+    def get_field(self):
+        return None
+
+
+class TextBatch(InputBatchBase):
+    def __init__(self, use_cuda: bool):
+        super(TextBatch, self).__init__(use_cuda)
+
+    def create_one_batch(self, input_dataset_: List[List[str]]):
+        return input_dataset_
 
     def get_field(self):
         return None

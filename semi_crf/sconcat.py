@@ -40,6 +40,9 @@ class SegmentalConcatenate(SegmentEncoderBase):
     def encoding_dim(self):
         return self.dim
 
+    def numeric_input(self):
+        return True
+
 
 if __name__ == "__main__":
     seq_len = 5

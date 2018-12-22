@@ -6,7 +6,7 @@ logger = logging.getLogger(__name__)
 
 
 class EmbeddingLayer(torch.nn.Module):
-    def __init__(self, n_d, word2id, embs=None, fix_emb=True, oov='<oov>', pad='<pad>', normalize=True):
+    def __init__(self, n_d, word2id, embs=None, fix_emb=True, oov='<oov>', pad='<pad>', normalize=False):
         super(EmbeddingLayer, self).__init__()
         self.word2id = word2id
         self.id2word = {i: word for word, i in word2id.items()}

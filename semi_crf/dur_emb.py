@@ -26,6 +26,9 @@ class DurationEmbeddings(SegmentEncoderBase):
     def encoding_dim(self):
         return self.out_dim
 
+    def numeric_input(self):
+        return True
+
 
 def debug():
     seq_len = 5

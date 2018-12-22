@@ -17,7 +17,7 @@ import torch
 import subprocess
 import h5py
 import shutil
-from semi_crf.batch import Batcher, SegmentBatch, LengthBatch, InputBatch
+from semi_crf.batch import Batcher, SegmentBatch, LengthBatch, TextBatch, InputBatch
 from semi_crf.embedding_layer import EmbeddingLayer
 from semi_crf.embedding_layer import load_embedding_txt
 from semi_crf.sdiff import SegmentalDifference
@@ -90,6 +90,7 @@ class Model(torch.nn.Module):
                  n_class: int,
                  use_cuda: bool):
         super(Model, self).__init__()
+        self.n_class = n_class
         self.use_cuda = use_cuda
         self.dropout = torch.nn.Dropout(p=conf["dropout"])
 
@@ -141,10 +142,15 @@ class Model(torch.nn.Module):
 
         self.segment_encoders = torch.nn.ModuleList(segment_encoders)
 
-        self.segment_scorer = torch.nn.Sequential(torch.nn.Linear(enc_dim, enc_dim),
+        label_dim = conf["label_dim"]
+        label_embeddings = torch.FloatTensor(n_class, label_dim).uniform_(-0.25, 0.25)
+        self.label_embeddings = torch.nn.Parameter(label_embeddings)
+
+        score_dim = enc_dim + label_dim
+        self.segment_scorer = torch.nn.Sequential(torch.nn.Linear(score_dim, score_dim),
                                                   torch.nn.ReLU(),
                                                   torch.nn.Dropout(p=conf['dropout']),
-                                                  torch.nn.Linear(enc_dim, n_class))
+                                                  torch.nn.Linear(score_dim, 1))
 
         if conf["semicrf"]["order"] == 0:
             self.classify_layer = ZeroOrderSemiCRFLayer(use_cuda)
@@ -160,6 +166,7 @@ class Model(torch.nn.Module):
                 output_: torch.Tensor):
         # input_: (batch_size, seq_len)
         lens_ = input_[-1]
+        text_ = input_[-2]
         embeddings_ = []
         for n, input_layer in enumerate(self.input_layers):
             embeddings_.append(input_layer(input_[n]))
@@ -174,13 +181,24 @@ class Model(torch.nn.Module):
 
         segment_reprs_ = []
         for segment_encoder in self.segment_encoders:
-            segment_reprs_.append(segment_encoder(encoded_input_))
+            # decide to use numeric input or not
+            if segment_encoder.numeric_input():
+                segment_reprs_.append(segment_encoder(encoded_input_))
+            else:
+                segment_reprs_.append(segment_encoder(text_))
 
         segment_repr_ = torch.cat(segment_reprs_, dim=-1)
 
         segment_repr_ = self.dropout(segment_repr_)
 
-        transitions = self.segment_scorer(segment_repr_)
+        segment_repr_ = segment_repr_.unsqueeze_(-2).expand(-1, -1, -1, self.n_class, -1)
+
+        label_size, label_dim = self.label_embeddings.size()
+        label_repr_ = self.label_embeddings.view(1, 1, 1, label_size, label_dim).expand(
+            segment_repr_.size(0), segment_repr_.size(1), segment_repr_.size(2), -1, -1)
+        segment_repr_ = torch.cat([segment_repr_, label_repr_], dim=-1)
+
+        transitions = self.segment_scorer(segment_repr_).squeeze(-1)
         start_time = time.time()
 
         output, loss = self.classify_layer.forward(transitions, output_, lens_)
@@ -346,21 +364,21 @@ def train():
     for c in conf['input']:
         if c['type'] == 'embeddings':
             batcher = InputBatch(c['name'], c['field'], c['min_cut'],
-                                 c.get('oov', '<oov>'), c.get('pad', '<pad>'), use_cuda)
+                                 c.get('oov', '<oov>'), c.get('pad', '<pad>'), c.get('lower', False), use_cuda)
             if c['fixed']:
                 if 'pretrained' in c:
                     batcher.create_dict_from_file(c['pretrained'])
                 else:
-                    logger.warning('it un-reasonable to use fix embedding without pretraining.')
+                    logger.warning('it is un-reasonable to use fix embedding without pretraining.')
             else:
                 batcher.create_dict_from_dataset(raw_training_input_data_[c['field']])
         else:
             raise ValueError('Unsupported embedding')
         input_batchers.append(batcher)
     # till now, lexicon is fixed, but embeddings was not
-
-    length_batcer = LengthBatch(use_cuda)
-    input_batchers.append(length_batcer)
+    # keep the order of [textbatcher, lengthbatcher]
+    input_batchers.append(TextBatch(use_cuda))
+    input_batchers.append(LengthBatch(use_cuda))
 
     segment_batcher = SegmentBatch(use_cuda)
     segment_batcher.create_dict_from_dataset(raw_training_segment_data_)
@@ -374,7 +392,8 @@ def train():
                 logger.info('loaded {0} embedding entries.'.format(len(embs[0])))
             else:
                 embs = None
-            layer = EmbeddingLayer(c['dim'], input_batchers[i].mapping, fix_emb=c['fixed'], embs=embs)
+            layer = EmbeddingLayer(c['dim'], input_batchers[i].mapping, fix_emb=c['fixed'],
+                                   embs=embs, normalize=c.get('normalize', True))
             logger.info('embedding layer for field {0} '
                         'created with {1} x {2}.'.format(c['field'], layer.n_V, layer.n_d))
             input_layers.append(layer)
@@ -424,7 +443,7 @@ def train():
         if exception.errno != errno.EEXIST:
             raise
 
-    for input_batcher in input_batchers[:-1]:
+    for input_batcher in input_batchers[:-2]:
         with codecs.open(os.path.join(opt.model, '{0}.dic'.format(input_batcher.name)), 'w',
                          encoding='utf-8') as fpo:
             for w, i in input_batcher.mapping.items():

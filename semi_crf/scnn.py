@@ -50,6 +50,9 @@ class SegmentalConvolution(SegmentEncoderBase):
     def encoding_dim(self):
         return self.n_filters
 
+    def numeric_input(self):
+        return True
+
 
 if __name__ == "__main__":
     seq_len = 5

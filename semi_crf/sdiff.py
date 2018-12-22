@@ -31,6 +31,9 @@ class SegmentalDifference(SegmentEncoderBase):
     def encoding_dim(self):
         return self.inp_dim
 
+    def numeric_input(self):
+        return True
+
 
 if __name__ == "__main__":
     seq_len = 5
