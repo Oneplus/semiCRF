@@ -8,4 +8,3 @@ class InputEncoderBase(torch.nn.Module):
 
     def encoding_dim(self):
         raise NotImplementedError()
-    

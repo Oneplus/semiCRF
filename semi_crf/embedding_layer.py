@@ -2,24 +2,12 @@ import torch
 import logging
 import codecs
 import numpy as np
-logging.basicConfig(level=logging.INFO, format='%(asctime)-15s %(levelname)s: %(message)s')
+logger = logging.getLogger(__name__)
 
 
 class EmbeddingLayer(torch.nn.Module):
     def __init__(self, n_d, word2id, embs=None, fix_emb=True, oov='<oov>', pad='<pad>', normalize=True):
         super(EmbeddingLayer, self).__init__()
-        if embs is not None:
-            embwords, embvecs = embs
-            # for word in embwords:
-            #  assert word not in word2id, "Duplicate words in pre-trained embeddings"
-            #  word2id[word] = len(word2id)
-
-            logging.info("{} pre-trained word embeddings loaded.".format(len(word2id)))
-            if n_d != len(embvecs[0]):
-                logging.warning("[WARNING] n_d ({}) != word vector size ({}). Use {} for embeddings.".format(
-                    n_d, len(embvecs[0]), len(embvecs[0])))
-                n_d = len(embvecs[0])
-
         self.word2id = word2id
         self.id2word = {i: word for word, i in word2id.items()}
         self.n_V, self.n_d = len(word2id), n_d
@@ -29,9 +17,13 @@ class EmbeddingLayer(torch.nn.Module):
         self.embedding.weight.data.uniform_(-0.25, 0.25)
 
         if embs is not None:
+            emb_words, emb_vecs = embs
             weight = self.embedding.weight
-            weight.data[:len(embwords)].copy_(torch.from_numpy(embvecs))
-            logging.info("embedding shape: {}".format(weight.size()))
+            for emb_word, emb_vec in zip(emb_words, emb_vecs):
+                if emb_word not in word2id:
+                    continue
+                i = word2id[emb_word]
+                weight.data[i].copy_(torch.from_numpy(emb_vec))
 
         if normalize:
             weight = self.embedding.weight
