@@ -26,12 +26,16 @@ class SegmentalRNN(SegmentEncoderBase):
         for starting_pos in range(seq_len):
             ending_pos = min(starting_pos + self.max_seg_len, seq_len)
             indices = torch.arange(starting_pos, ending_pos)
+            if self.use_cuda:
+                indices = indices.cuda()
             block_input_ = input_.index_select(1, indices)
             fwd_output_, _ = self.forward_rnn(block_input_)
             fwd_cache_.append(fwd_output_)
         for ending_pos in range(seq_len):
             starting_pos = max(-1, ending_pos - self.max_seg_len)
             indices = torch.arange(ending_pos, starting_pos, -1)
+            if self.use_cuda:
+                indices = indices.cuda()
             block_input_ = input_.index_select(1, indices)
             bwd_output_, _ = self.backward_rnn(block_input_)
             bwd_cache_.append(bwd_output_)

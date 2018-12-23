@@ -15,10 +15,14 @@ class SegmentalContextualizedEmbeddings(SegmentEncoderBase):
         self.n_layers = self.lexicon['#info'][1].item()
 
         logger.info('dim: {}'.format(dim))
-        logger.info('number of layers: {}'.format(n_layers))
+        logger.info('number of layers: {}'.format(self.n_layers))
 
-        weights = torch.randn(n_layers)
+        weights = torch.randn(self.n_layers)
         self.weights = torch.nn.Parameter(weights, requires_grad=True)
+        self.forward_paddings_ = torch.nn.ModuleList(
+            [torch.nn.ConstantPad2d((0, 0, length, 0), 0) for length in range(1, max_seg_len + 1)])
+        self.backward_paddings_ = torch.nn.ModuleList(
+            [torch.nn.ConstantPad2d((0, 0, 0, length), 0) for length in range(1, max_seg_len + 1)])
 
     def forward(self, input_: List[List[str]]) -> torch.Tensor:
         # input_: (batch_size, seq_len, dim)
@@ -29,24 +33,18 @@ class SegmentalContextualizedEmbeddings(SegmentEncoderBase):
         if self.use_cuda:
             encoding_ = encoding_.cuda()
 
+        half_dim = self.dim // 2
         for i, one_input_ in enumerate(input_):
             sentence_key = '\t'.join(one_input_).replace('.', '$period$').replace('/', '$backslash$')
-            data = torch.from_numpy(self.lexicon[sentence_key][()]).transpose(0, 1)
-            data = torch.autograd.Variable(data, requires_grad=False)
-            data = data.transpose(-2, -1).matmul(self.weights)
-            for ending_pos in range(seq_len):
-                for starting_pos in range(max(ending_pos - self.max_seg_len, -1) + 1, ending_pos + 1):
-                    # the starting_pos and ending_pos are inclusive
-                    length = ending_pos - starting_pos
-                    if ending_pos + 1 < seq_len:
-                        forward = data[ending_pos + 1, :self.dim / 2] - data[starting_pos, :self.dim / 2]
-                    else:
-                        forward = -data[starting_pos, :self.dim / 2]
-                    if starting_pos - 1 >= 0:
-                        backward = data[starting_pos - 1, self.dim / 2:] - data[ending_pos, self.dim / 2:]
-                    else:
-                        backward = -data[ending_pos, self.dim / 2:]
-                    encoding_[i, ending_pos, length, :] = torch.cat([forward, backward], dim=-1)
+            data_ = torch.from_numpy(self.lexicon[sentence_key][()]).transpose(0, 1)
+            data_ = torch.autograd.Variable(data_, requires_grad=False)
+            data_ = data_.transpose(-2, -1).matmul(self.weights)
+
+            for length in range(self.max_seg_len):
+                encoding_[:, :, length, :half_dim] = \
+                    data_[:, :, :half_dim] - self.forward_paddings_[length](data_)[:, :seq_len, :half_dim]
+                encoding_[:, :, length, half_dim:] = \
+                    data_[:, :, half_dim:] - self.backward_paddings_[length](data_)[:, length + 1:, half_dim:]
 
         # output_: (batch_size, seq_len, max_seg_len, dim)
         return encoding_
