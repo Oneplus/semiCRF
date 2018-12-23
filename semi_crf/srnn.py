@@ -6,9 +6,12 @@ from semi_crf.segment_encoder_base import SegmentEncoderBase
 class SegmentalRNN(SegmentEncoderBase):
     def __init__(self, max_seg_len, dim, hidden_dim, dropout, use_cuda):
         super(SegmentalRNN, self).__init__(max_seg_len, use_cuda)
-        self.encoder = torch.nn.LSTM(dim, hidden_dim,
-                                     bidirectional=True, num_layers=1,
-                                     dropout=dropout, batch_first=True)
+        self.forward_rnn = torch.nn.LSTM(dim, hidden_dim,
+                                         bidirectional=False, num_layers=1,
+                                         dropout=dropout, batch_first=True)
+        self.backward_rnn = torch.nn.LSTM(dim, hidden_dim,
+                                          bidirectional=False, num_layers=1,
+                                          dropout=dropout, batch_first=True)
         self.hidden_dim = hidden_dim
 
     def forward(self, input_: torch.Tensor) -> torch.Tensor:
@@ -18,13 +21,27 @@ class SegmentalRNN(SegmentEncoderBase):
         if self.use_cuda:
             encoding_ = encoding_.cuda()
 
+        fwd_cache_ = []
+        bwd_cache_ = []
+        for starting_pos in range(seq_len):
+            ending_pos = min(starting_pos + self.max_seg_len, seq_len)
+            indices = torch.arange(starting_pos, ending_pos)
+            block_input_ = input_.index_select(1, indices)
+            fwd_output_, _ = self.forward_rnn(block_input_)
+            fwd_cache_.append(fwd_output_)
         for ending_pos in range(seq_len):
-            for starting_pos in range(max(ending_pos - self.max_seg_len, -1) + 1, ending_pos + 1):
+            starting_pos = max(-1, ending_pos - self.max_seg_len)
+            indices = torch.arange(ending_pos, starting_pos, -1)
+            block_input_ = input_.index_select(1, indices)
+            bwd_output_, _ = self.backward_rnn(block_input_)
+            bwd_cache_.append(bwd_output_)
+
+        for starting_pos in range(seq_len):
+            for ending_pos in range(starting_pos, min(starting_pos + self.max_seg_len, seq_len)):
                 length = ending_pos - starting_pos
-                block_input_ = input_.narrow(1, starting_pos, length + 1)
-                output_, _ = self.encoder(block_input_)
-                encoding_[:, ending_pos, length, :] = \
-                    torch.cat([output_[:, -1, :self.hidden_dim], output_[:, 0, self.hidden_dim:]], dim=-1)
+                encoding_[:, ending_pos, length, :self.hidden_dim] = fwd_cache_[starting_pos][:, length, :]
+                encoding_[:, ending_pos, length, self.hidden_dim:] = bwd_cache_[ending_pos][:, length, :]
+
         return encoding_
 
     def encoding_dim(self):
@@ -39,6 +56,7 @@ if __name__ == "__main__":
     dim = 7
     batch_size = 2
     max_seg_len = 3
+    torch.manual_seed(1)
 
     encoder = SegmentalRNN(max_seg_len, dim, dim, 0.1, False)
     print(encoder)

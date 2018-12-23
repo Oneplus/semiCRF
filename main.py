@@ -15,7 +15,6 @@ import tempfile
 import collections
 import torch
 import subprocess
-import h5py
 import shutil
 from semi_crf.batch import Batcher, SegmentBatch, LengthBatch, TextBatch, InputBatch
 from semi_crf.embedding_layer import EmbeddingLayer
@@ -364,7 +363,7 @@ def train():
     for c in conf['input']:
         if c['type'] == 'embeddings':
             batcher = InputBatch(c['name'], c['field'], c['min_cut'],
-                                 c.get('oov', '<oov>'), c.get('pad', '<pad>'), c.get('lower', False), use_cuda)
+                                 c.get('oov', '<oov>'), c.get('pad', '<pad>'), not c.get('cased', True), use_cuda)
             if c['fixed']:
                 if 'pretrained' in c:
                     batcher.create_dict_from_file(c['pretrained'])
@@ -478,61 +477,67 @@ def test():
     cmd.add_argument('--gpu', default=-1, type=int, help='use id of gpu, -1 if cpu.')
     cmd.add_argument("--input", help="the path to the test file.")
     cmd.add_argument('--output', help='the path to the output file.')
-    cmd.add_argument("--models", required=True, help="path to save model")
+    cmd.add_argument("--model", required=True, help="path to save model")
 
     args = cmd.parse_args(sys.argv[2:])
+    use_cuda = args.gpu >= 0 and torch.cuda.is_available()
 
     if args.gpu >= 0:
         torch.cuda.set_device(args.gpu)
-
-    lexicon = h5py.File(args.lexicon, 'r')
-    dim, n_layers = lexicon['#info'][0].item(), lexicon['#info'][1].item()
-    logger.info('dim: {}'.format(dim))
-    logger.info('n_layers: {}'.format(n_layers))
+        use_cuda = True
 
     model_path = args.model
 
-    args2 = dict2namedtuple(json.load(codecs.open(os.path.join(model_path, 'config.json'), 'r', encoding='utf-8')))
+    model_cmd_opt = dict2namedtuple(json.load(codecs.open(os.path.join(model_path, 'config.json'), 'r', encoding='utf-8')))
+    conf = json.load(open(model_cmd_opt.config, 'r'))
 
-    word_lexicon = {}
-    word_emb_layers = []
-    with codecs.open(os.path.join(model_path, 'word.dic'), 'r', encoding='utf-8') as fpi:
-        for line in fpi:
-            tokens = line.strip().split('\t')
-            if len(tokens) == 1:
-                tokens.insert(0, '\u3000')
-            token, i = tokens
-            word_lexicon[token] = int(i)
+    input_batchers = []
+    input_layers = []
+    for c in conf['input']:
+        if c['type'] == 'embeddings':
+            batcher = InputBatch(c['name'], c['field'], c['min_cut'],
+                                 c.get('oov', '<oov>'), c.get('pad', '<pad>'), not c.get('cased', True), use_cuda)
+            with open(os.path.join(model_path, '{0}.dic'.format(c['name'])), 'r') as fpi:
+                mapping = batcher.mapping
+                for line in fpi:
+                    token, i = line.strip().split('\t')
+                    mapping[token] = int(i)
+            layer = EmbeddingLayer(c['dim'], batcher.mapping, fix_emb=c['fixed'],
+                                   embs=None, normalize=c.get('normalize', False))
+            logger.info('embedding layer for field {0} '
+                        'created with {1} x {2}.'.format(c['field'], layer.n_V, layer.n_d))
+        else:
+            raise ValueError('Unsupported input type')
+        input_batchers.append(batcher)
+        input_layers.append(layer)
 
-    word_emb_layer = EmbeddingLayer(args2.word_dim, word_lexicon, fix_emb=False, embs=None)
+    input_batchers.append(TextBatch(use_cuda))
+    input_batchers.append(LengthBatch(use_cuda))
 
-    logger.info('word embedding size: ' + str(len(word_emb_layers[0].word2id)))
+    segment_batcher = SegmentBatch(use_cuda)
 
-    label2id, id2label = {}, {}
+    id2label = {}
     with codecs.open(os.path.join(model_path, 'label.dic'), 'r', encoding='utf-8') as fpi:
         for line in fpi:
             token, i = line.strip().split('\t')
-            label2id[token] = int(i)
+            segment_batcher.mapping[token] = int(i)
             id2label[int(i)] = token
-    logger.info('number of labels: {0}'.format(len(label2id)))
+    logger.info('labels: {0}'.format(segment_batcher.mapping))
 
-    use_cuda = args.gpu >= 0 and torch.cuda.is_available()
-
-    model = Model(args2, word_emb_layer, len(label2id), use_cuda)
-    model.load_state_dict(torch.load(os.path.join(path, 'model.pkl'), map_location=lambda storage, loc: storage))
+    n_tags = len(id2label)
+    model = Model(conf, input_layers, model_cmd_opt.max_seg_len, n_tags, use_cuda)
+    model.load_state_dict(torch.load(os.path.join(model_path, 'model.pkl'), map_location=lambda storage, loc: storage))
     if use_cuda:
         model = model.cuda()
 
-    raw_test_data, raw_test_labels = read_corpus(args.input)
-    label_to_index(raw_test_labels, label2id, incremental=False)
+    raw_test_input_data_, raw_test_segment_data_ = read_corpus(args.input, model_cmd_opt.max_seg_len)
 
-    test_data, test_labels, test_lens, order = create_batches(dim, n_layers,
-                                                              raw_test_data, raw_test_labels,
-                                                              word_lexicon,
-                                                              label2id,
-                                                              args2.batch_size,
-                                                              shuffle=False, sort=True, keep_full=True,
-                                                              use_cuda=use_cuda)
+    batcher = Batcher(n_tags, model_cmd_opt.max_seg_len,
+                      raw_test_input_data_, raw_test_segment_data_,
+                      input_batchers, segment_batcher,
+                      model_cmd_opt.batch_size,
+                      shuffle=False, sorting=True, keep_full=True,
+                      use_cuda=use_cuda)
 
     if args.output is not None:
         fpo = codecs.open(args.output, 'w', encoding='utf-8')
@@ -541,21 +546,20 @@ def test():
 
     model.eval()
     tagset = []
-    for x, p, y, lens in zip(test_data, test_labels, test_lens):
-        output, loss = model.forward(x, p, y)
-        output_data = output.data
-        for bid in range(len(x)):
+    orders = []
+    for input_, segment_, order in batcher.get():
+        output, _ = model.forward(input_, segment_)
+        for bid in range(len(input_[0])):
             tags = []
-            for k in range(lens[bid]):
-                tag = id2label[int(output_data[bid][k])]
-                tags.append(tag)
+            output_data_ = output[bid]
+            for start, length, label in output_data_:
+                tag = id2label[int(label)]
+                tags.append((start, length, tag))
             tagset.append(tags)
+        orders.extend(order)
 
-    for l in order:
-        for tag in tagset[l]:
-            print(tag, file=fpo)
-        print(file=fpo)
-
+    for order in orders:
+        print(' '.join(['{0}:{1}:{2}'.format(start, length, tag) for start, length, tag in tagset[order]]), file=fpo)
     fpo.close()
 
 

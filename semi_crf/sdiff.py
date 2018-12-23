@@ -4,9 +4,14 @@ from semi_crf.segment_encoder_base import SegmentEncoderBase
 
 
 class SegmentalDifference(SegmentEncoderBase):
-    def __init__(self, max_seg_len, inp_dim, use_cuda):
+    def __init__(self, max_seg_len, dim, use_cuda):
         super(SegmentalDifference, self).__init__(max_seg_len, use_cuda)
-        self.inp_dim = inp_dim
+        self.dim = dim
+        assert dim % 2 == 0
+        self.forward_paddings_ = torch.nn.ModuleList(
+            [torch.nn.ConstantPad2d((0, 0, length, 0), 0) for length in range(1, max_seg_len + 1)])
+        self.backward_paddings_ = torch.nn.ModuleList(
+            [torch.nn.ConstantPad2d((0, 0, 0, length), 0) for length in range(1, max_seg_len + 1)])
 
     def forward(self, input_: torch.Tensor) -> torch.Tensor:
         # input_: (batch_size, seq_len, dim)
@@ -16,20 +21,18 @@ class SegmentalDifference(SegmentEncoderBase):
         if self.use_cuda:
             encoding_ = encoding_.cuda()
 
-        for ending_pos in range(seq_len):
-            for starting_pos in range(max(ending_pos - self.max_seg_len, -1) + 1, ending_pos + 1):
-                # the starting_pos and ending_pos are inclusive
-                length = ending_pos - starting_pos
-                if starting_pos == 0:
-                    encoding_[:, ending_pos, length, :] = input_[:, ending_pos, :]
-                else:
-                    encoding_[:, ending_pos, length, :] = input_[:, ending_pos, :] - input_[:, starting_pos - 1, :]
+        half_dim = dim // 2
+        for length in range(self.max_seg_len):
+            encoding_[:, :, length, :half_dim] = \
+                input_[:, :, :half_dim] - self.forward_paddings_[length](input_)[:, :seq_len, :half_dim]
+            encoding_[:, :, length, half_dim:] = \
+                input_[:, :, half_dim:] - self.backward_paddings_[length](input_)[:, length + 1:, half_dim:]
 
         # output_: (batch_size, seq_len, max_seg_len, dim)
         return encoding_
 
     def encoding_dim(self):
-        return self.inp_dim
+        return self.dim
 
     def numeric_input(self):
         return True
@@ -37,11 +40,11 @@ class SegmentalDifference(SegmentEncoderBase):
 
 if __name__ == "__main__":
     seq_len = 5
-    dim = 7
+    dim = 8
     batch_size = 2
     max_seg_len = 3
 
-    encoder = SegmentalDifference(max_seg_len, False)
+    encoder = SegmentalDifference(max_seg_len, dim, False)
     print(encoder)
     print(encoder.encoding_dim())
 
