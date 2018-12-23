@@ -21,7 +21,7 @@ from semi_crf.embedding_layer import EmbeddingLayer
 from semi_crf.embedding_layer import load_embedding_txt
 from semi_crf.sdiff import SegmentalDifference
 from semi_crf.sconcat import SegmentalConcatenate
-from semi_crf.scnn import SegmentalConvolution
+from semi_crf.scnn import SegmentalConvolution, FastSegmentalConvolution
 from semi_crf.srnn import SegmentalRNN
 from semi_crf.dur_emb import DurationEmbeddings
 from semi_crf.dummy_inp import DummyInputEncoder
@@ -128,6 +128,9 @@ class Model(torch.nn.Module):
                 encoder = SegmentalConcatenate(max_seg_len, encoded_input_dim, conf["dropout"], use_cuda)
             elif name == 'scnn':
                 encoder = SegmentalConvolution(max_seg_len, encoded_input_dim, c["filters"], c["n_highway"], use_cuda)
+            elif name == 'fast_scnn':
+                encoder = FastSegmentalConvolution(max_seg_len, encoded_input_dim,
+                                                   c["filters"], c["n_highway"], use_cuda)
             elif name == 'srnn':
                 encoder = SegmentalRNN(max_seg_len, encoded_input_dim, c["hidden_dim"], conf["dropout"], use_cuda)
             elif name == 'dur_emb':
