@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+from typing import List
 import torch
 import h5py
 import logging
@@ -9,12 +10,11 @@ logger = logging.getLogger(__name__)
 class SegmentalContextualizedEmbeddings(SegmentEncoderBase):
     def __init__(self, max_seg_len, lexicon_path, use_cuda):
         super(SegmentalContextualizedEmbeddings, self).__init__(max_seg_len, use_cuda)
-        self.dim = dim
         self.lexicon = h5py.File(lexicon_path, 'r')
         self.dim = self.lexicon['#info'][0].item()
         self.n_layers = self.lexicon['#info'][1].item()
 
-        logger.info('dim: {}'.format(dim))
+        logger.info('dim: {}'.format(self.dim))
         logger.info('number of layers: {}'.format(self.n_layers))
 
         weights = torch.randn(self.n_layers)
@@ -30,21 +30,26 @@ class SegmentalContextualizedEmbeddings(SegmentEncoderBase):
         seq_len = max([len(seq) for seq in input_])
 
         encoding_ = torch.FloatTensor(batch_size, seq_len, self.max_seg_len, self.dim).fill_(0.)
+        elmo_ = torch.FloatTensor(batch_size, seq_len, self.dim).fill_(0.)
         if self.use_cuda:
             encoding_ = encoding_.cuda()
+            elmo_ = elmo_.cuda()
 
         half_dim = self.dim // 2
         for i, one_input_ in enumerate(input_):
             sentence_key = '\t'.join(one_input_).replace('.', '$period$').replace('/', '$backslash$')
+            one_seq_len_ = len(one_input_)
             data_ = torch.from_numpy(self.lexicon[sentence_key][()]).transpose(0, 1)
+            if self.use_cuda:
+                data_ = data_.cuda()
             data_ = torch.autograd.Variable(data_, requires_grad=False)
-            data_ = data_.transpose(-2, -1).matmul(self.weights)
+            elmo_[i, :one_seq_len_, :] = data_.transpose(-2, -1).matmul(self.weights)
 
-            for length in range(self.max_seg_len):
-                encoding_[:, :, length, :half_dim] = \
-                    data_[:, :, :half_dim] - self.forward_paddings_[length](data_)[:, :seq_len, :half_dim]
-                encoding_[:, :, length, half_dim:] = \
-                    data_[:, :, half_dim:] - self.backward_paddings_[length](data_)[:, length + 1:, half_dim:]
+        for length in range(self.max_seg_len):
+            encoding_[:, :, length, :half_dim] = \
+                elmo_[:, :, :half_dim] - self.forward_paddings_[length](elmo_)[:, :seq_len, :half_dim]
+            encoding_[:, :, length, half_dim:] = \
+                elmo_[:, :, half_dim:] - self.backward_paddings_[length](elmo_)[:, length + 1:, half_dim:]
 
         # output_: (batch_size, seq_len, max_seg_len, dim)
         return encoding_
@@ -69,6 +74,9 @@ if __name__ == "__main__":
     print(encoder)
     print(encoder.encoding_dim())
 
-    input_ = torch.arange(0, batch_size * seq_len * dim).view(batch_size, seq_len, dim)
+    input_ = [
+        ['EU', 'rejects', 'German', 'call', 'to', 'boycott', 'British', 'lamb', '.'],
+        ['Peter', 'Blackburn'],
+        ['BRUSSELS', '1996-08-22']]
     print(input_)
     print(encoder.forward(input_))

@@ -23,6 +23,8 @@ from semi_crf.sdiff import SegmentalDifference
 from semi_crf.sconcat import SegmentalConcatenate
 from semi_crf.scnn import SegmentalConvolution, FastSegmentalConvolution
 from semi_crf.srnn import SegmentalRNN
+from semi_crf.semb import SegmentEmbeddings
+from semi_crf.selmo import SegmentalContextualizedEmbeddings
 from semi_crf.dur_emb import DurationEmbeddings
 from semi_crf.dummy_inp import DummyInputEncoder
 from semi_crf.lstm_inp import LSTMInputEncoder, GalLSTMInputEncoder
@@ -133,6 +135,11 @@ class Model(torch.nn.Module):
                                                    c["filters"], c["n_highway"], use_cuda)
             elif name == 'srnn':
                 encoder = SegmentalRNN(max_seg_len, encoded_input_dim, c["hidden_dim"], conf["dropout"], use_cuda)
+            elif name == 'semb':
+                encoder = SegmentEmbeddings(max_seg_len, c['pretrained'], c['has_header'],
+                                            c['fixed'], c['normalize'], use_cuda=use_cuda)
+            elif name == 'selmo':
+                encoder = SegmentalContextualizedEmbeddings(max_seg_len, c['path'], use_cuda)
             elif name == 'dur_emb':
                 encoder = DurationEmbeddings(max_seg_len, c["dim"], use_cuda)
             else:
