@@ -29,6 +29,8 @@ class SegmentEmbeddings(SegmentEncoderBase):
 
         # hack the embedding initialization to speed up
         data = self.embedings.embedding.weight.data
+        # handle oov and pad, avoid effect of randomization.
+        data[:2, :].fill_(0)
         data[2:, :].copy_(torch.from_numpy(vals))
 
         if normalize:

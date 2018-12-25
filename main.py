@@ -180,13 +180,16 @@ class Model(torch.nn.Module):
         for n, input_layer in enumerate(self.input_layers):
             embeddings_.append(input_layer(input_[n]))
 
-        input_ = torch.cat(embeddings_, dim=-1)
-        # input_: (batch_size, seq_len, input_dim)
+        if len(embeddings_) > 0:
+            input_ = torch.cat(embeddings_, dim=-1)
+            # input_: (batch_size, seq_len, input_dim)
 
-        encoded_input_ = self.input_encoder(input_)
-        # encoded_input_: (batch_size, seq_len, dim)
+            encoded_input_ = self.input_encoder(input_)
+            # encoded_input_: (batch_size, seq_len, dim)
 
-        encoded_input_ = self.dropout(encoded_input_)
+            encoded_input_ = self.dropout(encoded_input_)
+        else:
+            assert all([not segment_encoder_.numeric_input() for segment_encoder_ in self.segment_encoders])
 
         segment_reprs_ = []
         for segment_encoder in self.segment_encoders:

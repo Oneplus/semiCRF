@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+from typing import List
 import torch
 from semi_crf.segment_encoder_base import SegmentEncoderBase
 
@@ -9,9 +10,10 @@ class DurationEmbeddings(SegmentEncoderBase):
         self.embeddings = torch.nn.Embedding(max_seg_len + 1, out_dim)
         self.out_dim = out_dim
 
-    def forward(self, input_: torch.Tensor) -> torch.Tensor:
+    def forward(self, input_: List[List[str]]) -> torch.Tensor:
         # input_: (batch_size, seq_len, dim)
-        batch_size, seq_len, _ = input_.size()
+        batch_size = len(input_)
+        seq_len = max([len(seq) for seq in input_])
 
         mask_ = torch.LongTensor(batch_size, seq_len, self.max_seg_len).fill_(0)
         for ending_pos in range(seq_len):
@@ -27,7 +29,7 @@ class DurationEmbeddings(SegmentEncoderBase):
         return self.out_dim
 
     def numeric_input(self):
-        return True
+        return False
 
 
 def debug():
