@@ -1,26 +1,10 @@
 #!/usr/bin/env python
 from typing import List
 import torch
-import codecs
-import numpy as np
 import logging
 from semi_crf.segment_encoder_base import SegmentEncoderBase
-from semi_crf.embedding_layer import EmbeddingLayer
+from semi_crf.embedding_layer import EmbeddingLayer, load_embedding_txt
 logger = logging.getLogger(__name__)
-
-
-def load_embedding_txt(path, has_header=False):
-    words = []
-    vals = []
-    with codecs.open(path, 'r', encoding='utf-8') as fin:
-        if has_header:
-            fin.readline()
-
-        for line in fin:
-            fields = line.strip().split()
-            words.append(fields[0])
-            vals += [float(x) for x in fields[1:]]
-    return words, np.asarray(vals).reshape(len(words), -1)
 
 
 class SegmentEmbeddings(SegmentEncoderBase):

@@ -1,4 +1,8 @@
+#!/usr/bin/env python
+# code from: https://github.com/salesforce/awd-lstm-lm
 import torch
+import logging
+logger = logging.getLogger(__name__)
 
 
 class WeightDrop(torch.nn.Module):
@@ -23,7 +27,7 @@ class WeightDrop(torch.nn.Module):
             self.module.flatten_parameters = self.widget_demagnetizer_y2k_edition
 
         for name_w in self.weights:
-            print('Applying weight drop of {} to {}'.format(self.dropout, name_w))
+            logger.info('Applying weight drop of {} to {}'.format(self.dropout, name_w))
             w = getattr(self.module, name_w)
             del self.module._parameters[name_w]
             self.module.register_parameter(name_w + '_raw', torch.nn.Parameter(w.data))
