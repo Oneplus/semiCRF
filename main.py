@@ -188,10 +188,10 @@ class SemiCRFModel(torch.nn.Module):
                                                   torch.nn.Dropout(p=conf['dropout']),
                                                   torch.nn.Linear(score_dim, 1))
 
-        if conf["semicrf"]["order"] == 0:
+        if conf["classifier"]["order"] == 0:
             self.classify_layer = ZeroOrderSemiCRFLayer(use_cuda)
         else:
-            raise ValueError("Unsupported order: {}".format(conf["semicrf"]["order"]))
+            raise ValueError("Unsupported order: {}".format(conf["classifier"]["order"]))
 
         self.train_time = 0
         self.eval_time = 0
