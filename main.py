@@ -16,10 +16,11 @@ import collections
 import torch
 import subprocess
 import shutil
-from semi_crf.batch import Batcher, SegmentBatch, LengthBatch, TextBatch, InputBatch
+from semi_crf.batch import Batcher, SegmentBatch, TagBatch, LengthBatch, TextBatch, InputBatch
 from semi_crf.embedding_layer import EmbeddingLayer
 from semi_crf.embedding_layer import load_embedding_txt
 from semi_crf.sdiff import SegmentalDifference
+from semi_crf.smean import SegmentalMean
 from semi_crf.sconcat import SegmentalConcatenate
 from semi_crf.scnn import SegmentalConvolution, FastSegmentalConvolution
 from semi_crf.srnn import SegmentalRNN
@@ -29,6 +30,8 @@ from semi_crf.dur_emb import DurationEmbeddings
 from semi_crf.dummy_inp import DummyInputEncoder
 from semi_crf.lstm_inp import LSTMInputEncoder, GalLSTMInputEncoder
 from semi_crf.semi_crf import ZeroOrderSemiCRFLayer
+from semi_crf.crf_layer import CRFLayer
+from semi_crf.classify_layer import ClassifyLayer
 logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s - %(message)s',
                     level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -38,9 +41,9 @@ def dict2namedtuple(dic: Dict):
     return collections.namedtuple('Namespace', dic.keys())(**dic)
 
 
-def read_corpus(path: str,
-                max_seg_len: int,
-                split_segment_exceeding_max_length: bool = True):
+def read_segment_corpus(path: str,
+                        max_seg_len: int,
+                        split_segment_exceeding_max_length: bool = True):
     """
     read segment format data.
 
@@ -84,13 +87,35 @@ def read_corpus(path: str,
     return new_input_dataset_, segment_dataset_
 
 
-class Model(torch.nn.Module):
+def read_tag_corpus(path: str):
+    input_dataset_ = []
+    tag_dataset_ = []
+
+    n_input_fields = None
+    with codecs.open(path, 'r', encoding='utf-8') as fin:
+        for line in fin:
+            inputs_, tags_ = line.strip().rsplit('|||', 1)
+
+            tags_ = tags_.strip().split()
+            input_fields_ = inputs_.split('|||')
+            if n_input_fields is None:
+                n_input_fields = len(input_fields_)
+            input_dataset_.append([input_field_.strip().split() for input_field_ in input_fields_])
+            tag_dataset_.append(tags_)
+    new_input_dataset_ = [[] for _ in range(n_input_fields)]
+    for input_fields_ in input_dataset_:
+        for n, input_field_ in enumerate(input_fields_):
+            new_input_dataset_[n].append(input_field_)
+    return new_input_dataset_, tag_dataset_
+
+
+class SemiCRFModel(torch.nn.Module):
     def __init__(self, conf: Dict,
                  input_layers: List[EmbeddingLayer],
                  max_seg_len: int,
                  n_class: int,
                  use_cuda: bool):
-        super(Model, self).__init__()
+        super(SemiCRFModel, self).__init__()
         self.n_class = n_class
         self.use_cuda = use_cuda
         self.dropout = torch.nn.Dropout(p=conf["dropout"])
@@ -135,6 +160,8 @@ class Model(torch.nn.Module):
                                                    c["filters"], c["n_highway"], use_cuda)
             elif name == 'srnn':
                 encoder = SegmentalRNN(max_seg_len, encoded_input_dim, c["hidden_dim"], conf["dropout"], use_cuda)
+            elif name == 'smean':
+                encoder = SegmentalMean(max_seg_len, encoded_input_dim, use_cuda)
             elif name == 'semb':
                 encoder = SegmentEmbeddings(max_seg_len, c['pretrained'], c['has_header'],
                                             c['fixed'], c['normalize'], use_cuda=use_cuda)
@@ -220,6 +247,75 @@ class Model(torch.nn.Module):
         return output, loss
 
 
+class SeqLabelModel(torch.nn.Module):
+    def __init__(self, conf: Dict,
+                 input_layers: List[EmbeddingLayer],
+                 n_class: int,
+                 use_cuda: bool):
+        super(SeqLabelModel, self).__init__()
+        self.n_class = n_class
+        self.use_cuda = use_cuda
+        self.dropout = torch.nn.Dropout(p=conf["dropout"])
+
+        self.input_layers = torch.nn.ModuleList(input_layers)
+        input_dim = 0
+        for input_layer in self.input_layers:
+            # the last one in auxilary
+            input_dim += input_layer.n_d
+
+        input_encoder_name = conf['input_encoder']['type'].lower()
+        if input_encoder_name == 'gal_lstm':
+            self.input_encoder = GalLSTMInputEncoder(input_dim,
+                                                     conf['input_encoder']['hidden_dim'],
+                                                     conf['input_encoder']['n_layers'],
+                                                     conf["dropout"])
+            encoded_input_dim = self.input_encoder.encoding_dim()
+        elif input_encoder_name == 'lstm':
+            self.input_encoder = LSTMInputEncoder(input_dim,
+                                                  conf['input_encoder']['hidden_dim'],
+                                                  conf['input_encoder']['n_layers'],
+                                                  conf["dropout"])
+            encoded_input_dim = self.input_encoder.encoding_dim()
+        elif input_encoder_name == 'dummy':
+            self.input_encoder = DummyInputEncoder()
+            encoded_input_dim = input_dim
+        else:
+            raise ValueError('Unknown input encoder: {}'.format(input_encoder_name))
+
+        if conf["classifier"]["type"].lower() == 'crf':
+            self.classify_layer = CRFLayer(encoded_input_dim, n_class, use_cuda)
+        else:
+            self.classify_layer = ClassifyLayer(encoded_input_dim, n_class, use_cuda)
+
+        self.train_time = 0
+        self.eval_time = 0
+        self.emb_time = 0
+        self.classify_time = 0
+
+    def forward(self, input_: List[torch.Tensor],
+                output_: torch.Tensor):
+        # input_: (batch_size, seq_len)
+        embeddings_ = []
+        for n, input_layer in enumerate(self.input_layers):
+            embeddings_.append(input_layer(input_[n]))
+
+        input_ = torch.cat(embeddings_, dim=-1)
+        # input_: (batch_size, seq_len, input_dim)
+
+        encoded_input_ = self.input_encoder(input_)
+        # encoded_input_: (batch_size, seq_len, dim)
+
+        encoded_input_ = self.dropout(encoded_input_)
+
+        start_time = time.time()
+
+        output, loss = self.classify_layer.forward(encoded_input_, output_)
+
+        if not self.training:
+            self.classify_time += time.time() - start_time
+        return output, loss
+
+
 def eval_model(model: torch.nn.Module,
                batcher: Batcher,
                ix2label: Dict[int, str],
@@ -232,22 +328,33 @@ def eval_model(model: torch.nn.Module,
         descriptor, path = tempfile.mkstemp(suffix='.tmp')
         fpo = codecs.getwriter('utf-8')(os.fdopen(descriptor, 'w'))
 
+    is_segment = isinstance(model, SemiCRFModel)
     model.eval()
     tagset = []
     orders = []
-    for input_, segment_, order in batcher.get():
-        output, _ = model.forward(input_, segment_)
+    for input_, output_, order in batcher.get():
+        output, _ = model.forward(input_, output_)
         for bid in range(len(input_[0])):
             tags = []
             output_data_ = output[bid]
-            for start, length, label in output_data_:
-                tag = ix2label[int(label)]
-                tags.append((start, length, tag))
+            if is_segment:
+                for start, length, label in output_data_:
+                    tag = ix2label[int(label)]
+                    tags.append((start, length, tag))
+            else:
+                lens = input_[-1][bid]
+                for k in range(lens):
+                    tag = ix2label[output[bid][k].item()]
+                    tags.append(tag)
             tagset.append(tags)
         orders.extend(order)
 
     for order in orders:
-        print(' '.join(['{0}:{1}:{2}'.format(start, length, tag) for start, length, tag in tagset[order]]), file=fpo)
+        if is_segment:
+            print(' '.join(['{0}:{1}:{2}'.format(start, length, tag) for start, length, tag in tagset[order]]),
+                  file=fpo)
+        else:
+            print(' '.join(['{0}'.format(tag) for tag in tagset[order]]), file=fpo)
     fpo.close()
 
     model.train()
@@ -355,13 +462,25 @@ def train():
         opt.gold_test_path = opt.test_path
 
     use_cuda = opt.gpu >= 0 and torch.cuda.is_available()
-    # load raw data
-    raw_training_input_data_, raw_training_segment_data_ = read_corpus(opt.train_path, opt.max_seg_len)
-    raw_valid_input_data_, raw_valid_segment_data_ = read_corpus(opt.valid_path, opt.max_seg_len)
-    if opt.test_path is not None:
-        raw_test_input_data_, raw_test_segment_data_ = read_corpus(opt.test_path, opt.max_seg_len)
+    use_semi_crf = conf["classifier"]["type"].lower() == 'semicrf'
+    if use_semi_crf:
+        read_fn = read_segment_corpus
+        read_train_fn_args = [opt.train_path, opt.max_seg_len]
+        read_valid_fn_args = [opt.valid_path, opt.max_seg_len]
+        read_test_fn_args = [opt.test_path, opt.max_seg_len]
     else:
-        raw_test_input_data_, raw_test_segment_data_ = [], []
+        read_fn = read_tag_corpus
+        read_train_fn_args = [opt.train_path]
+        read_valid_fn_args = [opt.valid_path]
+        read_test_fn_args = [opt.test_path]
+
+    # load raw data
+    raw_training_input_data_, raw_training_output_data_ = read_fn(*read_train_fn_args)
+    raw_valid_input_data_, raw_valid_output_data_ = read_fn(*read_valid_fn_args)
+    if opt.test_path is not None:
+        raw_test_input_data_, raw_test_output_data_ = read_fn(*read_test_fn_args)
+    else:
+        raw_test_input_data_, raw_test_output_data_ = [], []
 
     logger.info('we have {0} fields'.format(len(raw_training_input_data_)))
     logger.info('training instance: {}, validation instance: {}, test instance: {}.'.format(
@@ -392,9 +511,14 @@ def train():
     input_batchers.append(TextBatch(use_cuda))
     input_batchers.append(LengthBatch(use_cuda))
 
-    segment_batcher = SegmentBatch(use_cuda)
-    segment_batcher.create_dict_from_dataset(raw_training_segment_data_)
-    logger.info('tags: {0}'.format(segment_batcher.mapping))
+    if conf['classifier']['type'].lower() == 'semicrf':
+        output_batcher = SegmentBatch(use_cuda)
+        output_batcher.create_dict_from_dataset(raw_training_output_data_)
+        logger.info('tags: {0}'.format(output_batcher.mapping))
+    else:
+        output_batcher = TagBatch(use_cuda)
+        output_batcher.create_dict_from_dataset(raw_training_output_data_)
+        logger.info('tags: {0}'.format(output_batcher.mapping))
 
     input_layers = []
     for i, c in enumerate(conf['input']):
@@ -410,34 +534,37 @@ def train():
                         'created with {1} x {2}.'.format(c['field'], layer.n_V, layer.n_d))
             input_layers.append(layer)
 
-    n_tags = segment_batcher.n_tags
-    id2label = {ix: label for label, ix in segment_batcher.mapping.items()}
+    n_tags = output_batcher.n_tags
+    id2label = {ix: label for label, ix in output_batcher.mapping.items()}
 
     training_batcher = Batcher(n_tags, opt.max_seg_len,
                                raw_training_input_data_,
-                               raw_training_segment_data_,
-                               input_batchers, segment_batcher, opt.batch_size, use_cuda=use_cuda)
+                               raw_training_output_data_,
+                               input_batchers, output_batcher, opt.batch_size, use_cuda=use_cuda)
 
     if opt.eval_steps is None or opt.eval_steps > len(raw_training_input_data_):
         opt.eval_steps = training_batcher.num_batches()
 
     valid_batcher = Batcher(n_tags, opt.max_seg_len,
-                            raw_valid_input_data_, raw_valid_segment_data_,
-                            input_batchers, segment_batcher, opt.batch_size,
+                            raw_valid_input_data_, raw_valid_output_data_,
+                            input_batchers, output_batcher, opt.batch_size,
                             shuffle=False, sorting=True, keep_full=True,
                             use_cuda=use_cuda)
 
     if opt.test_path is not None:
         test_batcher = Batcher(n_tags, opt.max_seg_len,
-                               raw_test_input_data_, raw_test_segment_data_,
-                               input_batchers, segment_batcher,
+                               raw_test_input_data_, raw_test_output_data_,
+                               input_batchers, output_batcher,
                                opt.batch_size,
                                shuffle=False, sorting=True, keep_full=True,
                                use_cuda=use_cuda)
     else:
         test_batcher = None
 
-    model = Model(conf, input_layers, opt.max_seg_len, n_tags, use_cuda)
+    if use_semi_crf:
+        model = SemiCRFModel(conf, input_layers, opt.max_seg_len, n_tags, use_cuda)
+    else:
+        model = SeqLabelModel(conf, input_layers, n_tags, use_cuda)
 
     logger.info(str(model))
     if use_cuda:
@@ -462,7 +589,7 @@ def train():
                 print('{0}\t{1}'.format(w, i), file=fpo)
 
     with codecs.open(os.path.join(opt.model, 'label.dic'), 'w', encoding='utf-8') as fpo:
-        for label, i in segment_batcher.mapping.items():
+        for label, i in output_batcher.mapping.items():
             print('{0}\t{1}'.format(label, i), file=fpo)
 
     new_config_path = os.path.join(opt.model, os.path.basename(opt.config))
@@ -538,12 +665,12 @@ def test():
     logger.info('labels: {0}'.format(segment_batcher.mapping))
 
     n_tags = len(id2label)
-    model = Model(conf, input_layers, model_cmd_opt.max_seg_len, n_tags, use_cuda)
+    model = SemiCRFModel(conf, input_layers, model_cmd_opt.max_seg_len, n_tags, use_cuda)
     model.load_state_dict(torch.load(os.path.join(model_path, 'model.pkl'), map_location=lambda storage, loc: storage))
     if use_cuda:
         model = model.cuda()
 
-    raw_test_input_data_, raw_test_segment_data_ = read_corpus(args.input, model_cmd_opt.max_seg_len)
+    raw_test_input_data_, raw_test_segment_data_ = read_segment_corpus(args.input, model_cmd_opt.max_seg_len)
 
     batcher = Batcher(n_tags, model_cmd_opt.max_seg_len,
                       raw_test_input_data_, raw_test_segment_data_,

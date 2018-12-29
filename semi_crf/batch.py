@@ -34,6 +34,32 @@ class SegmentBatch(object):
         return batch_
 
 
+class TagBatch(object):
+    def __init__(self, use_cuda):
+        self.use_cuda = use_cuda
+        self.mapping = {'<pad>': 0}
+        self.n_tags = 1
+
+    def create_dict_from_dataset(self, tag_dataset_: List[List[str]]):
+        for tags_ in tag_dataset_:
+            for tag in tags_:
+                if tag not in self.mapping:
+                    self.mapping[tag] = len(self.mapping)
+        self.n_tags = len(self.mapping)
+
+    def create_one_batch(self, batch_size: int,
+                         seq_len: int,
+                         tag_dataset_: List[List[str]]):
+        batch_ = torch.LongTensor(batch_size, seq_len).fill_(0)
+        for i, tags_ in enumerate(tag_dataset_):
+            for j, label in enumerate(tags_):
+                label = self.mapping.get(label, 0)
+                batch_[i, j] = label
+        if self.use_cuda:
+            batch_ = batch_.cuda()
+        return batch_
+
+
 class InputBatchBase(object):
     def __init__(self, use_cuda: bool):
         self.use_cuda = use_cuda
