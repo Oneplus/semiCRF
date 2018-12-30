@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 from __future__ import print_function
 from __future__ import unicode_literals
-from typing import Dict, List, Tuple
+from typing import Dict, List
 import os
 import errno
 import sys
@@ -16,16 +16,17 @@ import collections
 import torch
 import subprocess
 import shutil
+import numpy as np
 from semi_crf.batch import Batcher, SegmentBatch, TagBatch, LengthBatch, TextBatch, InputBatch
 from semi_crf.embedding_layer import EmbeddingLayer
 from semi_crf.embedding_layer import load_embedding_txt
+from semi_crf.elmo import InputLayerBase, ContextualizedWordEmbeddings
 from semi_crf.sdiff import SegmentalDifference
 from semi_crf.smean import SegmentalMean
 from semi_crf.sconcat import SegmentalConcatenate
 from semi_crf.scnn import SegmentalConvolution, FastSegmentalConvolution
 from semi_crf.srnn import SegmentalRNN
 from semi_crf.semb import SegmentEmbeddings
-from semi_crf.selmo import SegmentalContextualizedEmbeddings
 from semi_crf.dur_emb import DurationEmbeddings
 from semi_crf.dummy_inp import DummyInputEncoder
 from semi_crf.lstm_inp import LSTMInputEncoder, GalLSTMInputEncoder
@@ -111,7 +112,7 @@ def read_tag_corpus(path: str):
 
 class SemiCRFModel(torch.nn.Module):
     def __init__(self, conf: Dict,
-                 input_layers: List[EmbeddingLayer],
+                 input_layers: List[InputLayerBase],
                  max_seg_len: int,
                  n_class: int,
                  use_cuda: bool):
@@ -124,7 +125,7 @@ class SemiCRFModel(torch.nn.Module):
         input_dim = 0
         for input_layer in self.input_layers:
             # the last one in auxilary
-            input_dim += input_layer.n_d
+            input_dim += input_layer.encoding_dim()
 
         input_encoder_name = conf['input_encoder']['type'].lower()
         if input_encoder_name == 'gal_lstm':
@@ -165,8 +166,6 @@ class SemiCRFModel(torch.nn.Module):
             elif name == 'semb':
                 encoder = SegmentEmbeddings(max_seg_len, c['pretrained'], c['has_header'],
                                             c['fixed'], c['normalize'], use_cuda=use_cuda)
-            elif name == 'selmo':
-                encoder = SegmentalContextualizedEmbeddings(max_seg_len, c['path'], use_cuda)
             elif name == 'dur_emb':
                 encoder = DurationEmbeddings(max_seg_len, c["dim"], use_cuda)
             else:
@@ -179,7 +178,7 @@ class SemiCRFModel(torch.nn.Module):
         self.segment_encoders = torch.nn.ModuleList(segment_encoders)
 
         label_dim = conf["label_dim"]
-        label_embeddings = torch.FloatTensor(n_class, label_dim).uniform_(-0.25, 0.25)
+        label_embeddings = torch.FloatTensor(n_class, label_dim).uniform_(-1/np.sqrt(label_dim), 1/np.sqrt(label_dim))
         self.label_embeddings = torch.nn.Parameter(label_embeddings)
 
         score_dim = enc_dim + label_dim
@@ -198,14 +197,15 @@ class SemiCRFModel(torch.nn.Module):
         self.emb_time = 0
         self.classify_time = 0
 
-    def forward(self, input_: List[torch.Tensor],
+    def forward(self, input_: Dict[str, torch.Tensor],
                 output_: torch.Tensor):
         # input_: (batch_size, seq_len)
-        lens_ = input_[-1]
-        text_ = input_[-2]
+        lens_ = input_['length']
+        text_ = input_['text']
         embeddings_ = []
-        for n, input_layer in enumerate(self.input_layers):
-            embeddings_.append(input_layer(input_[n]))
+        for input_layer in self.input_layers:
+            input_field_name = input_layer.input_field_name
+            embeddings_.append(input_layer(input_[input_field_name]))
 
         if len(embeddings_) > 0:
             input_ = torch.cat(embeddings_, dim=-1)
@@ -249,7 +249,7 @@ class SemiCRFModel(torch.nn.Module):
 
 class SeqLabelModel(torch.nn.Module):
     def __init__(self, conf: Dict,
-                 input_layers: List[EmbeddingLayer],
+                 input_layers: List[InputLayerBase],
                  n_class: int,
                  use_cuda: bool):
         super(SeqLabelModel, self).__init__()
@@ -260,8 +260,8 @@ class SeqLabelModel(torch.nn.Module):
         self.input_layers = torch.nn.ModuleList(input_layers)
         input_dim = 0
         for input_layer in self.input_layers:
-            # the last one in auxilary
-            input_dim += input_layer.n_d
+            # the last one in auxiliary
+            input_dim += input_layer.encoding_dim()
 
         input_encoder_name = conf['input_encoder']['type'].lower()
         if input_encoder_name == 'gal_lstm':
@@ -334,7 +334,7 @@ def eval_model(model: torch.nn.Module,
     orders = []
     for input_, output_, order in batcher.get():
         output, _ = model.forward(input_, output_)
-        for bid in range(len(input_[0])):
+        for bid in range(len(input_['text'])):
             tags = []
             output_data_ = output[bid]
             if is_segment:
@@ -342,7 +342,7 @@ def eval_model(model: torch.nn.Module,
                     tag = ix2label[int(label)]
                     tags.append((start, length, tag))
             else:
-                lens = input_[-1][bid]
+                lens = input_['length'][bid]
                 for k in range(lens):
                     tag = ix2label[output[bid][k].item()]
                     tags.append(tag)
@@ -363,7 +363,7 @@ def eval_model(model: torch.nn.Module,
     f = 0
     for line in p.stdout.readlines():
         f = line.strip().split()[-1]
-    #os.remove(path)
+    # os.remove(path)
     return float(f)
 
 
@@ -389,7 +389,7 @@ def train_model(epoch: int,
         _, loss = model.forward(input_, segment_)
 
         total_loss += loss.item()
-        n_tags = sum(input_[-1])
+        n_tags = sum(input_['length'])
         total_tag += n_tags
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), opt.clip_grad)
@@ -491,7 +491,7 @@ def train():
         sum([len(seq) for seq in raw_test_input_data_[0]])))
 
     # create batcher
-    input_batchers = []
+    input_batchers = {}
     for c in conf['input']:
         if c['type'] == 'embeddings':
             batcher = InputBatch(c['name'], c['field'], c['min_cut'],
@@ -503,13 +503,12 @@ def train():
                     logger.warning('it is un-reasonable to use fix embedding without pretraining.')
             else:
                 batcher.create_dict_from_dataset(raw_training_input_data_[c['field']])
-        else:
-            raise ValueError('Unsupported embedding')
-        input_batchers.append(batcher)
+            input_batchers[c['name']] = batcher
+
     # till now, lexicon is fixed, but embeddings was not
     # keep the order of [textbatcher, lengthbatcher]
-    input_batchers.append(TextBatch(use_cuda))
-    input_batchers.append(LengthBatch(use_cuda))
+    input_batchers['text'] = TextBatch(use_cuda)
+    input_batchers['length'] = LengthBatch(use_cuda)
 
     if conf['classifier']['type'].lower() == 'semicrf':
         output_batcher = SegmentBatch(use_cuda)
@@ -528,11 +527,19 @@ def train():
                 logger.info('loaded {0} embedding entries.'.format(len(embs[0])))
             else:
                 embs = None
-            layer = EmbeddingLayer(c['dim'], input_batchers[i].mapping, fix_emb=c['fixed'],
+            name = c['name']
+            mapping = input_batchers[name].mapping
+            layer = EmbeddingLayer(name, c['dim'], mapping, fix_emb=c['fixed'],
                                    embs=embs, normalize=c.get('normalize', False))
             logger.info('embedding layer for field {0} '
                         'created with {1} x {2}.'.format(c['field'], layer.n_V, layer.n_d))
             input_layers.append(layer)
+        elif c['type'] == 'elmo':
+            name = c['name']
+            layer = ContextualizedWordEmbeddings(name, c['path'], use_cuda)
+            input_layers.append(layer)
+        else:
+            raise ValueError('{} unknown input layer'.format(c['type']))
 
     n_tags = output_batcher.n_tags
     id2label = {ix: label for label, ix in output_batcher.mapping.items()}
@@ -582,7 +589,9 @@ def train():
         if exception.errno != errno.EEXIST:
             raise
 
-    for input_batcher in input_batchers[:-2]:
+    for name_, input_batcher in input_batchers.items():
+        if name_ == 'text' or name_ == 'length':
+            continue
         with codecs.open(os.path.join(opt.model, '{0}.dic'.format(input_batcher.name)), 'w',
                          encoding='utf-8') as fpo:
             for w, i in input_batcher.mapping.items():
@@ -631,10 +640,11 @@ def test():
     model_cmd_opt = dict2namedtuple(json.load(codecs.open(os.path.join(model_path, 'config.json'), 'r', encoding='utf-8')))
     conf = json.load(open(model_cmd_opt.config, 'r'))
 
-    input_batchers = []
+    input_batchers = {}
     input_layers = []
     for c in conf['input']:
         if c['type'] == 'embeddings':
+            name = c['name']
             batcher = InputBatch(c['name'], c['field'], c['min_cut'],
                                  c.get('oov', '<oov>'), c.get('pad', '<pad>'), not c.get('cased', True), use_cuda)
             with open(os.path.join(model_path, '{0}.dic'.format(c['name'])), 'r') as fpi:
@@ -642,17 +652,20 @@ def test():
                 for line in fpi:
                     token, i = line.strip().split('\t')
                     mapping[token] = int(i)
-            layer = EmbeddingLayer(c['dim'], batcher.mapping, fix_emb=c['fixed'],
+            layer = EmbeddingLayer(name, c['dim'], batcher.mapping, fix_emb=c['fixed'],
                                    embs=None, normalize=c.get('normalize', False))
             logger.info('embedding layer for field {0} '
                         'created with {1} x {2}.'.format(c['field'], layer.n_V, layer.n_d))
+            input_batchers[name] = batcher
+        elif c['type'] == 'elmo':
+            name = c['name']
+            layer = ContextualizedWordEmbeddings(name, c['path'], use_cuda)
         else:
             raise ValueError('Unsupported input type')
-        input_batchers.append(batcher)
         input_layers.append(layer)
 
-    input_batchers.append(TextBatch(use_cuda))
-    input_batchers.append(LengthBatch(use_cuda))
+    input_batchers['text'] = TextBatch(use_cuda)
+    input_batchers['length'] = LengthBatch(use_cuda)
 
     segment_batcher = SegmentBatch(use_cuda)
 
@@ -665,12 +678,20 @@ def test():
     logger.info('labels: {0}'.format(segment_batcher.mapping))
 
     n_tags = len(id2label)
-    model = SemiCRFModel(conf, input_layers, model_cmd_opt.max_seg_len, n_tags, use_cuda)
+    use_semi_crf = conf["classifier"]["type"].lower() == 'semicrf'
+    if use_semi_crf:
+        model = SemiCRFModel(conf, input_layers, model_cmd_opt.max_seg_len, n_tags, use_cuda)
+    else:
+        model = SeqLabelModel(conf, input_layers, n_tags, use_cuda)
+
     model.load_state_dict(torch.load(os.path.join(model_path, 'model.pkl'), map_location=lambda storage, loc: storage))
     if use_cuda:
         model = model.cuda()
 
-    raw_test_input_data_, raw_test_segment_data_ = read_segment_corpus(args.input, model_cmd_opt.max_seg_len)
+    if use_semi_crf:
+        raw_test_input_data_, raw_test_segment_data_ = read_segment_corpus(args.input, model_cmd_opt.max_seg_len)
+    else:
+        raw_test_input_data_, raw_test_segment_data_ = read_tag_corpus(args.input)
 
     batcher = Batcher(n_tags, model_cmd_opt.max_seg_len,
                       raw_test_input_data_, raw_test_segment_data_,
@@ -687,19 +708,29 @@ def test():
     model.eval()
     tagset = []
     orders = []
-    for input_, segment_, order in batcher.get():
-        output, _ = model.forward(input_, segment_)
-        for bid in range(len(input_[0])):
+    for input_, output_, order in batcher.get():
+        output, _ = model.forward(input_, output_)
+        for bid in range(len(input_['text'])):
             tags = []
             output_data_ = output[bid]
-            for start, length, label in output_data_:
-                tag = id2label[int(label)]
-                tags.append((start, length, tag))
+            if use_semi_crf:
+                for start, length, label in output_data_:
+                    tag = id2label[int(label)]
+                    tags.append((start, length, tag))
+            else:
+                lens = input_['length'][bid]
+                for k in range(lens):
+                    tag = id2label[output[bid][k].item()]
+                    tags.append(tag)
             tagset.append(tags)
         orders.extend(order)
 
     for order in orders:
-        print(' '.join(['{0}:{1}:{2}'.format(start, length, tag) for start, length, tag in tagset[order]]), file=fpo)
+        if use_semi_crf:
+            print(' '.join(['{0}:{1}:{2}'.format(start, length, tag) for start, length, tag in tagset[order]]),
+                  file=fpo)
+        else:
+            print(' '.join(['{0}'.format(tag) for tag in tagset[order]]), file=fpo)
     fpo.close()
 
 

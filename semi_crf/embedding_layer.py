@@ -2,11 +2,13 @@ import torch
 import logging
 import codecs
 import numpy as np
+from semi_crf.input_layer_base import InputLayerBase
 logger = logging.getLogger(__name__)
 
 
-class EmbeddingLayer(torch.nn.Module):
-    def __init__(self, n_d, word2id, embs=None, fix_emb=True, oov='<oov>', pad='<pad>', normalize=False):
+class EmbeddingLayer(InputLayerBase):
+    def __init__(self, input_field_name,
+                 n_d, word2id, embs=None, fix_emb=True, oov='<oov>', pad='<pad>', normalize=False):
         super(EmbeddingLayer, self).__init__()
         self.word2id = word2id
         self.id2word = {i: word for word, i in word2id.items()}
@@ -37,6 +39,9 @@ class EmbeddingLayer(torch.nn.Module):
 
     def forward(self, input_):
         return self.embedding(input_)
+
+    def encoding_dim(self):
+        return self.n_d
 
 
 def load_embedding_txt(path, has_header=False):

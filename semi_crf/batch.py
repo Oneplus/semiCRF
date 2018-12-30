@@ -1,9 +1,9 @@
 #!/usr/bin/env python
+from typing import List, Tuple, Dict
 import random
 import torch
 import logging
 import collections
-from typing import List, Tuple
 logger = logging.getLogger(__name__)
 
 
@@ -165,7 +165,7 @@ class Batcher(object):
                  max_seg_len: int,
                  input_dataset_: List[List[List[str]]],
                  segment_dataset_: List[List[Tuple[int, int, str]]],
-                 input_batchers_: List[InputBatchBase],
+                 input_batchers_: Dict[str, InputBatchBase],
                  segment_batcher_: SegmentBatch,
                  batch_size: int,
                  major_field: int = 0,
@@ -236,13 +236,13 @@ class Batcher(object):
             segment_batch_ = self.segment_batcher_.create_one_batch(end_id - start_id, seq_len,
                                                                     sorted_segment_dataset_[start_id: end_id])
 
-            input_batches_ = []
-            for input_batcher_ in self.input_batchers_:
+            input_batches_ = {}
+            for name_, input_batcher_ in self.input_batchers_.items():
                 field_ = input_batcher_.get_field()
                 if field_ is None:
                     field_ = self.major_field
-                input_batches_.append(input_batcher_.create_one_batch(
-                    sorted_input_dataset_[field_][start_id: end_id]))
+                input_batches_[name_] = input_batcher_.create_one_batch(
+                    sorted_input_dataset_[field_][start_id: end_id])
 
             yield input_batches_, segment_batch_, order[start_id: end_id]
 
