@@ -17,10 +17,10 @@ def get_segments(lines):
     start, tag = None, None
     for i, line in enumerate(lines):
         label = line.split()[0].lower()
-        if label.startswith('b-') or label == 'o':
+        if label.startswith('b-') or label.startswith('s-') or label == 'o':
             if start is not None:
                 segs.add((start, i - 1, tag))
-            if label.startswith('b-'):
+            if label.startswith('b-') or label.startswith('s-'):
                 start, tag = i, label.split('-', 1)[1]
             else:
                 start, tag = None, None

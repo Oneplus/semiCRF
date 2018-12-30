@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 class EmbeddingLayer(InputLayerBase):
     def __init__(self, input_field_name,
                  n_d, word2id, embs=None, fix_emb=True, oov='<oov>', pad='<pad>', normalize=False):
-        super(EmbeddingLayer, self).__init__()
+        super(EmbeddingLayer, self).__init__(input_field_name)
         self.word2id = word2id
         self.id2word = {i: word for word, i in word2id.items()}
         self.n_V, self.n_d = len(word2id), n_d

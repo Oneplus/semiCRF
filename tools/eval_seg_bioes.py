@@ -11,16 +11,31 @@ assert len(gold_dataset) == len(pred_dataset)
 
 def get_labels(line):
     tokens = line.strip().split('|||')[-1].strip().split()
-    return tokens
+    segs = set()
+    start = None
+    for i, line in enumerate(tokens):
+        label = line.split()[0].lower()
+        if label == 'b' or label == 's' or label == 'o':
+            if start is not None:
+                segs.add((start, i - 1))
+            if label == 'b' or label == 's':
+                start = i
+            else:
+                start = None
+    if start is not None:
+        segs.add((start, len(tokens) - 1))
+    return segs
 
 
-n_count = 0
-n_correct = 0
+n_corr, n_gold, n_pred = 0, 0, 0
 for gold_data, pred_data in zip(gold_dataset, pred_dataset):
-    for gold_line, pred_line in zip(get_labels(gold_data), get_labels(pred_data)):
-        gold_tag = gold_line.split()[0]
-        pred_tag = pred_line.split()[0]
-        n_count += 1
-        if gold_tag == pred_tag:
-            n_correct += 1
-print(n_correct / n_count)
+    gold_segs = get_labels(gold_data)
+    pred_segs = get_labels(pred_data)
+    for gold_seg in gold_segs:
+        if gold_seg in pred_segs:
+            n_corr += 1
+    n_gold += len(gold_segs)
+    n_pred += len(pred_segs)
+p = n_corr / n_pred
+r = n_corr / n_gold
+print(2 * p * r / (p + r))

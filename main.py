@@ -296,8 +296,9 @@ class SeqLabelModel(torch.nn.Module):
                 output_: torch.Tensor):
         # input_: (batch_size, seq_len)
         embeddings_ = []
-        for n, input_layer in enumerate(self.input_layers):
-            embeddings_.append(input_layer(input_[n]))
+        for input_layer in self.input_layers:
+            input_field_name = input_layer.input_field_name
+            embeddings_.append(input_layer(input_[input_field_name]))
 
         input_ = torch.cat(embeddings_, dim=-1)
         # input_: (batch_size, seq_len, input_dim)
@@ -667,18 +668,21 @@ def test():
     input_batchers['text'] = TextBatch(use_cuda)
     input_batchers['length'] = LengthBatch(use_cuda)
 
-    segment_batcher = SegmentBatch(use_cuda)
+    use_semi_crf = conf["classifier"]["type"].lower() == 'semicrf'
+    if use_semi_crf:
+        output_batcher = SegmentBatch(use_cuda)
+    else:
+        output_batcher = TagBatch(use_cuda)
 
     id2label = {}
     with codecs.open(os.path.join(model_path, 'label.dic'), 'r', encoding='utf-8') as fpi:
         for line in fpi:
             token, i = line.strip().split('\t')
-            segment_batcher.mapping[token] = int(i)
+            output_batcher.mapping[token] = int(i)
             id2label[int(i)] = token
-    logger.info('labels: {0}'.format(segment_batcher.mapping))
+    logger.info('labels: {0}'.format(output_batcher.mapping))
 
     n_tags = len(id2label)
-    use_semi_crf = conf["classifier"]["type"].lower() == 'semicrf'
     if use_semi_crf:
         model = SemiCRFModel(conf, input_layers, model_cmd_opt.max_seg_len, n_tags, use_cuda)
     else:
@@ -695,7 +699,7 @@ def test():
 
     batcher = Batcher(n_tags, model_cmd_opt.max_seg_len,
                       raw_test_input_data_, raw_test_segment_data_,
-                      input_batchers, segment_batcher,
+                      input_batchers, output_batcher,
                       model_cmd_opt.batch_size,
                       shuffle=False, sorting=True, keep_full=True,
                       use_cuda=use_cuda)
