@@ -13,8 +13,7 @@ def get_labels(line):
     tokens = line.strip().split('|||')[-1].strip().split()
     segs = set()
     start = None
-    for i, line in enumerate(tokens):
-        label = line.split()[0].lower()
+    for i, label in enumerate(tokens):
         if label == 'b' or label == 's' or label == 'o':
             if start is not None:
                 segs.add((start, i - 1))

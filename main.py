@@ -23,6 +23,7 @@ from semi_crf.embedding_layer import load_embedding_txt
 from semi_crf.elmo import InputLayerBase, ContextualizedWordEmbeddings
 from semi_crf.sdiff import SegmentalDifference
 from semi_crf.smean import SegmentalMean
+from semi_crf.srecur import SegmentalRecursive
 from semi_crf.sconcat import SegmentalConcatenate
 from semi_crf.scnn import SegmentalConvolution, FastSegmentalConvolution
 from semi_crf.srnn import SegmentalRNN
@@ -163,6 +164,8 @@ class SemiCRFModel(torch.nn.Module):
                 encoder = SegmentalRNN(max_seg_len, encoded_input_dim, c["hidden_dim"], conf["dropout"], use_cuda)
             elif name == 'smean':
                 encoder = SegmentalMean(max_seg_len, encoded_input_dim, use_cuda)
+            elif name == 'srecur':
+                encoder = SegmentalRecursive(max_seg_len, encoded_input_dim, use_cuda)
             elif name == 'semb':
                 encoder = SegmentEmbeddings(max_seg_len, c['pretrained'], c['has_header'],
                                             c['fixed'], c['normalize'], use_cuda=use_cuda)

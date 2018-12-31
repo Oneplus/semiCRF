@@ -23,12 +23,12 @@ class SegmentEmbeddings(SegmentEncoderBase):
                 self.mapping[word] = len(self.mapping)
             else:
                 logger.info('{} occurs multiple times?'.format(word))
-        self.embedings = EmbeddingLayer(self.dim, self.mapping, embs=None,
-                                        fix_emb=fixed, normalize=normalize)
-        logger.info('loaded segment embeddings: {0} x {1}'.format(self.embedings.n_V, self.embedings.n_d))
+        self.embeddings = EmbeddingLayer('<semb_nil>', self.dim, self.mapping, embs=None,
+                                         fix_emb=fixed, normalize=normalize)
+        logger.info('loaded segment embeddings: {0} x {1}'.format(self.embeddings.n_V, self.embeddings.n_d))
 
         # hack the embedding initialization to speed up
-        data = self.embedings.embedding.weight.data
+        data = self.embeddings.embedding.weight.data
         # handle oov and pad, avoid effect of randomization.
         data[:2, :].fill_(0)
         data[2:, :].copy_(torch.from_numpy(vals))
@@ -45,7 +45,7 @@ class SegmentEmbeddings(SegmentEncoderBase):
         seq_len = max([len(seq) for seq in input_])
         mask_ = torch.LongTensor(batch_size, seq_len, self.max_seg_len).fill_(1)
         if self.use_cuda:
-            mask_ = encoding_.cuda()
+            mask_ = mask_.cuda()
 
         for ending_pos in range(seq_len):
             for starting_pos in range(max(ending_pos - self.max_seg_len, -1) + 1, ending_pos + 1):
@@ -56,7 +56,7 @@ class SegmentEmbeddings(SegmentEncoderBase):
                     mask_[i, ending_pos, length] = self.mapping.get(token, 0)
 
         # output_: (batch_size, seq_len, max_seg_len, dim)
-        return self.embedings(mask_)
+        return self.embeddings(mask_)
 
     def encoding_dim(self):
         return self.dim
@@ -78,5 +78,7 @@ if __name__ == "__main__":
     print(encoder)
     print(encoder.encoding_dim())
 
-    input_ = [['this', 'is', 'a', 'test', '.'], ['China', 'is', 'a', 'country']]
+    input_ = [['this', 'is', 'a', 'test', '.'],
+              ['China', 'is', 'a', 'country'],
+              ['China', 'Daily', 'is', 'a', 'paper']]
     print(encoder.forward(input_))
