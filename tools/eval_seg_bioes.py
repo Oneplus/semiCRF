@@ -14,6 +14,7 @@ def get_labels(line):
     segs = set()
     start = None
     for i, label in enumerate(tokens):
+        label = label.lower()
         if label == 'b' or label == 's' or label == 'o':
             if start is not None:
                 segs.add((start, i - 1))

@@ -20,7 +20,11 @@ class GalLSTM(torch.nn.Module):
       for l in range(num_layers)
     ]
     if wdrop:
-      self.rnns = [WeightDrop(rnn, ['weight_hh_l0'], dropout=wdrop, variational=True) for rnn in self.rnns]
+      # Please don't set variational to be True
+      # See the discussion in https://github.com/salesforce/awd-lstm-lm/issues/72
+      # See the implementation in https://github.com/fastai/fastai/blob/e6b56de53f80d2b2d39037c82d3a23ce72507cd7/old/fastai/rnn_reg.py#L61
+      # See the discussion in https://medium.com/@ceshine/sorry-this-post-is-somewhat-out-dated-please-check-this-link-for-a-newer-implementation-of-e7d48ff3be0
+      self.rnns = [WeightDrop(rnn, ['weight_hh_l0'], dropout=wdrop, variational=False) for rnn in self.rnns]
     self.rnns = torch.nn.ModuleList(self.rnns)
 
   def forward(self, x):

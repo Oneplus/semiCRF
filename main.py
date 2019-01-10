@@ -635,14 +635,17 @@ def test():
     args = cmd.parse_args(sys.argv[2:])
     use_cuda = args.gpu >= 0 and torch.cuda.is_available()
 
-    if args.gpu >= 0:
-        torch.cuda.set_device(args.gpu)
-        use_cuda = True
-
     model_path = args.model
 
     model_cmd_opt = dict2namedtuple(json.load(codecs.open(os.path.join(model_path, 'config.json'), 'r', encoding='utf-8')))
     conf = json.load(open(model_cmd_opt.config, 'r'))
+
+    torch.manual_seed(model_cmd_opt.seed)
+    random.seed(model_cmd_opt.seed)
+    if args.gpu >= 0:
+        torch.cuda.set_device(args.gpu)
+        torch.cuda.manual_seed(model_cmd_opt.seed)
+        use_cuda = True
 
     input_batchers = {}
     input_layers = []
@@ -695,6 +698,10 @@ def test():
     if use_cuda:
         model = model.cuda()
 
+    model_parameters = filter(lambda p: p.requires_grad, model.parameters())
+    params = sum([np.prod(p.size()) for p in model_parameters])
+    logger.info('# of params: {0}'.format(params))
+
     if use_semi_crf:
         raw_test_input_data_, raw_test_segment_data_ = read_segment_corpus(args.input, model_cmd_opt.max_seg_len)
     else:
@@ -715,7 +722,9 @@ def test():
     model.eval()
     tagset = []
     orders = []
+    cnt = 0
     for input_, output_, order in batcher.get():
+        cnt += 1
         output, _ = model.forward(input_, output_)
         for bid in range(len(input_['text'])):
             tags = []
@@ -730,6 +739,8 @@ def test():
                     tag = id2label[output[bid][k].item()]
                     tags.append(tag)
             tagset.append(tags)
+        if cnt % model_cmd_opt.report_steps == 0:
+            logger.info('finished {0} x {1} batches'.format(cnt, model_cmd_opt.batch_size))
         orders.extend(order)
 
     for order in orders:
