@@ -195,13 +195,14 @@ class SemiCRFModel(torch.nn.Module):
         else:
             raise ValueError("Unsupported order: {}".format(conf["classifier"]["order"]))
 
-        self.train_time = 0
-        self.eval_time = 0
+        self.encode_time = 0
         self.emb_time = 0
         self.classify_time = 0
 
     def forward(self, input_: Dict[str, torch.Tensor],
                 output_: torch.Tensor):
+        start_time = time.time()
+
         # input_: (batch_size, seq_len)
         lens_ = input_['length']
         text_ = input_['text']
@@ -220,6 +221,11 @@ class SemiCRFModel(torch.nn.Module):
             encoded_input_ = self.dropout(encoded_input_)
         else:
             assert all([not segment_encoder_.numeric_input() for segment_encoder_ in self.segment_encoders])
+
+        if not self.training:
+            self.emb_time += time.time() - start_time
+
+        start_time = time.time()
 
         segment_reprs_ = []
         for segment_encoder in self.segment_encoders:
@@ -241,6 +247,10 @@ class SemiCRFModel(torch.nn.Module):
         segment_repr_ = torch.cat([segment_repr_, label_repr_], dim=-1)
 
         transitions = self.segment_scorer(segment_repr_).squeeze(-1)
+
+        if not self.training:
+            self.encode_time += time.time() - start_time
+
         start_time = time.time()
 
         output, loss = self.classify_layer.forward(transitions, output_, lens_)
@@ -290,26 +300,34 @@ class SeqLabelModel(torch.nn.Module):
         else:
             self.classify_layer = ClassifyLayer(encoded_input_dim, n_class, use_cuda)
 
-        self.train_time = 0
-        self.eval_time = 0
+        self.encode_time = 0
         self.emb_time = 0
         self.classify_time = 0
 
     def forward(self, input_: List[torch.Tensor],
                 output_: torch.Tensor):
         # input_: (batch_size, seq_len)
+        start_time = time.time()
+
         embeddings_ = []
         for input_layer in self.input_layers:
             input_field_name = input_layer.input_field_name
             embeddings_.append(input_layer(input_[input_field_name]))
 
         input_ = torch.cat(embeddings_, dim=-1)
+
+        if not self.training:
+            self.emb_time += time.time() - start_time
+
         # input_: (batch_size, seq_len, input_dim)
 
         encoded_input_ = self.input_encoder(input_)
         # encoded_input_: (batch_size, seq_len, dim)
 
         encoded_input_ = self.dropout(encoded_input_)
+
+        if not self.training:
+            self.encode_time += time.time() - start_time
 
         start_time = time.time()
 
@@ -617,7 +635,7 @@ def train():
                                               id2label, best_valid, test_result)
         if opt.lr_decay > 0:
             optimizer.param_groups[0]['lr'] *= opt.lr_decay
-        logger.info('Total encoder time: {:.2f}s'.format(model.eval_time / (epoch + 1)))
+        logger.info('Total encoder time: {:.2f}s'.format(model.encode_time / (epoch + 1)))
         logger.info('Total embedding time: {:.2f}s'.format(model.emb_time / (epoch + 1)))
         logger.info('Total classify time: {:.2f}s'.format(model.classify_time / (epoch + 1)))
 
@@ -750,6 +768,10 @@ def test():
         else:
             print(' '.join(['{0}'.format(tag) for tag in tagset[order]]), file=fpo)
     fpo.close()
+
+    logger.info('Total encoder time: {:.2f}s'.format(model.encode_time))
+    logger.info('Total embedding time: {:.2f}s'.format(model.emb_time))
+    logger.info('Total classify time: {:.2f}s'.format(model.classify_time))
 
 
 if __name__ == "__main__":
