@@ -30,6 +30,7 @@ from semi_crf.srnn import SegmentalRNN
 from semi_crf.semb import SegmentEmbeddings
 from semi_crf.dur_emb import DurationEmbeddings
 from semi_crf.dummy_inp import DummyInputEncoder
+from semi_crf.project_inp import ProjectedInputEncoder
 from semi_crf.lstm_inp import LSTMInputEncoder, GalLSTMInputEncoder
 from semi_crf.semi_crf import ZeroOrderSemiCRFLayer
 from semi_crf.crf_layer import CRFLayer
@@ -141,6 +142,10 @@ class SemiCRFModel(torch.nn.Module):
                                                   conf['input_encoder']['n_layers'],
                                                   conf["dropout"])
             encoded_input_dim = self.input_encoder.encoding_dim()
+        elif input_encoder_name == 'project':
+            self.input_encoder = ProjectedInputEncoder(input_dim,
+                                                       conf['input_encoder']['hidden_dim'])
+            encoded_input_dim = self.input_encoder.encoding_dim()
         elif input_encoder_name == 'dummy':
             self.input_encoder = DummyInputEncoder()
             encoded_input_dim = input_dim
@@ -246,7 +251,7 @@ class SemiCRFModel(torch.nn.Module):
             segment_repr_.size(0), segment_repr_.size(1), segment_repr_.size(2), -1, -1)
         segment_repr_ = torch.cat([segment_repr_, label_repr_], dim=-1)
 
-        transitions = self.segment_scorer(segment_repr_).squeeze(-1)
+        transitions = self.segment_scorer(segment_repr_).squeeze_(-1)
 
         if not self.training:
             self.encode_time += time.time() - start_time
@@ -288,6 +293,10 @@ class SeqLabelModel(torch.nn.Module):
                                                   conf['input_encoder']['hidden_dim'],
                                                   conf['input_encoder']['n_layers'],
                                                   conf["dropout"])
+            encoded_input_dim = self.input_encoder.encoding_dim()
+        elif input_encoder_name == 'project':
+            self.input_encoder = ProjectedInputEncoder(input_dim,
+                                                       conf['input_encoder']['hidden_dim'])
             encoded_input_dim = self.input_encoder.encoding_dim()
         elif input_encoder_name == 'dummy':
             self.input_encoder = DummyInputEncoder()
